@@ -24,7 +24,6 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
         body { font-family: 'Inter', sans-serif; }
-        /* Custom scrollbar for smooth navigation */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f5f9; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -42,7 +41,7 @@
         </div>
     </div>
 
-    <!-- Custom Modal Container (Replaces alert/prompt/confirm) -->
+    <!-- Custom Modal Container -->
     <div id="custom-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 animate-fade-in">
             <div class="px-6 py-4 bg-slate-50 border-b flex justify-between items-center">
@@ -64,9 +63,12 @@
     <!-- Footer -->
     <footer class="bg-white border-t border-slate-200 py-4 px-4 text-center text-xs text-slate-500 flex flex-col sm:flex-row justify-between items-center max-w-7xl mx-auto w-full gap-2">
         <div>
-            <strong>Assin Nsuta SHS ICT Department LMS & Portal</strong> &copy; 2026. Offline-First Academic System.
+            <strong>Assin Nsuta SHS ICT Department LMS & Portal</strong> &copy; 2026. Cloud-Synced & Offline-Resilient System.
         </div>
-        <div class="flex items-center space-x-3">
+        <div class="flex flex-wrap items-center justify-center gap-3">
+            <span id="cloud-sync-badge" onclick="pullFromCloud(true)" class="cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition" title="Click to sync with Google Sheets Cloud">
+                <i class="fas fa-cloud-upload-alt mr-1.5"></i> Cloud Sync Ready
+            </span>
             <span id="network-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
                 <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online Mode
             </span>
@@ -77,20 +79,42 @@
 
     <!-- JAVASCRIPT APPLICATION LOGIC -->
     <script>
+        // ====================================================================
+        // PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL BELOW FOR GLOBAL SYNC:
+        // ====================================================================
+        const DEFAULT_CLOUD_SYNC_URL = "https://script.google.com/macros/s/AKfycbwpEmJDwE3t6Rwd7OpGXznrmf9xHhO_-huBegagdSKv-rjbsGzXPE5f4PjFj0lKwMmAVA/exec"; 
+
         // --- STORAGE & DATABASE KEYS ---
         const DB_KEYS = {
-            SETTINGS: 'anass_lms_settings_v6',
-            TEACHERS: 'anass_lms_teachers_v6',
-            STUDENTS: 'anass_lms_students_v6',
-            MATERIALS: 'anass_lms_materials_v6',
-            QUIZZES: 'anass_lms_quizzes_v6',
-            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v6',
-            PROGRESS: 'anass_lms_progress_v6',
-            ANNOUNCEMENTS: 'anass_lms_announcements_v6',
-            SUBMISSIONS: 'anass_lms_submissions_v6',
-            TIMETABLE: 'anass_lms_timetable_v6',
-            FAQS: 'anass_lms_faqs_v6',
-            CURRENT_USER: 'anass_lms_current_user_v6'
+            SETTINGS: 'anass_lms_settings_v7',
+            TEACHERS: 'anass_lms_teachers_v7',
+            STUDENTS: 'anass_lms_students_v7',
+            MATERIALS: 'anass_lms_materials_v7',
+            QUIZZES: 'anass_lms_quizzes_v7',
+            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v7',
+            PROGRESS: 'anass_lms_progress_v7',
+            ANNOUNCEMENTS: 'anass_lms_announcements_v7',
+            SUBMISSIONS: 'anass_lms_submissions_v7',
+            TIMETABLE: 'anass_lms_timetable_v7',
+            FAQS: 'anass_lms_faqs_v7',
+            CURRENT_USER: 'anass_lms_current_user_v7',
+            CLOUD_URL: 'anass_lms_cloud_url_v7',
+            PENDING_SYNC: 'anass_lms_pending_sync_v7'
+        };
+
+        // Map internal DB_KEYS to Google Sheet Tab Names
+        const TABLE_KEY_MAP = {
+            SETTINGS: DB_KEYS.SETTINGS,
+            TEACHERS: DB_KEYS.TEACHERS,
+            STUDENTS: DB_KEYS.STUDENTS,
+            MATERIALS: DB_KEYS.MATERIALS,
+            QUIZZES: DB_KEYS.QUIZZES,
+            QUIZ_ATTEMPTS: DB_KEYS.QUIZ_ATTEMPTS,
+            PROGRESS: DB_KEYS.PROGRESS,
+            ANNOUNCEMENTS: DB_KEYS.ANNOUNCEMENTS,
+            SUBMISSIONS: DB_KEYS.SUBMISSIONS,
+            TIMETABLE: DB_KEYS.TIMETABLE,
+            FAQS: DB_KEYS.FAQS
         };
 
         // --- OFFICIAL 45 ASSIN NSUTA SHS CLASSES ---
@@ -100,7 +124,6 @@
             'SHS 3': ['3AGRIC', '3ARTS 1', '3ARTS 2A', '3ARTS 2B', '3ARTS 3', '3ARTS 4', '3BUS', '3LANG', '3H/E 1A', '3H/E 1B', '3H/E 2A', '3H/E 2B', '3SCI', '3V/A 1', '3V/A 2']
         };
 
-        // Active Quiz Runner State
         let activeQuizState = {
             quiz: null,
             answers: {},
@@ -108,8 +131,161 @@
             secondsRemaining: 0
         };
 
-        // Temporary Quiz Builder Questions State
         let builderQuestions = [];
+
+        // --- TWO-WAY GOOGLE SHEETS CLOUD SYNC ENGINE ---
+        function getCloudSyncUrl() {
+            const s = getSettings();
+            return (s.cloudSyncUrl && s.cloudSyncUrl.trim() !== '') 
+                ? s.cloudSyncUrl.trim() 
+                : (localStorage.getItem(DB_KEYS.CLOUD_URL) || DEFAULT_CLOUD_SYNC_URL).trim();
+        }
+
+        function setCloudBadgeStatus(state, text) {
+            const badge = document.getElementById('cloud-sync-badge');
+            if (!badge) return;
+            if (state === 'syncing') {
+                badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800";
+                badge.innerHTML = `<i class="fas fa-sync fa-spin mr-1.5"></i> ${text || 'Syncing Cloud...'}`;
+            } else if (state === 'synced') {
+                badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800";
+                badge.innerHTML = `<i class="fas fa-cloud-check mr-1.5"></i> ${text || 'Cloud Synced'}`;
+            } else if (state === 'pending') {
+                badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800";
+                badge.innerHTML = `<i class="fas fa-cloud-upload-alt mr-1.5"></i> ${text || 'Queued Offline'}`;
+            } else {
+                badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600";
+                badge.innerHTML = `<i class="fas fa-cloud mr-1.5"></i> ${text || 'Local Mode (No Cloud URL)'}`;
+            }
+        }
+
+        // Save table to localStorage AND push to Google Sheets Cloud
+        async function saveTableAndSync(tableName, dataObj) {
+            const storageKey = TABLE_KEY_MAP[tableName];
+            if (!storageKey) return;
+            localStorage.setItem(storageKey, JSON.stringify(dataObj));
+
+            const url = getCloudSyncUrl();
+            if (!url) {
+                setCloudBadgeStatus('local', 'Local Mode');
+                return;
+            }
+
+            if (!navigator.onLine) {
+                localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
+                setCloudBadgeStatus('pending', 'Saved Locally (Offline Queue)');
+                return;
+            }
+
+            setCloudBadgeStatus('syncing', 'Saving to Cloud...');
+            try {
+                await fetch(url, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({
+                        action: 'SYNC_TABLE',
+                        table: tableName,
+                        records: dataObj
+                    })
+                });
+                localStorage.removeItem(DB_KEYS.PENDING_SYNC);
+                setCloudBadgeStatus('synced', 'Cloud Synced');
+            } catch (err) {
+                localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
+                setCloudBadgeStatus('pending', 'Sync Retry Queued');
+            }
+        }
+
+        // Push ALL local tables to Google Sheets Cloud at once
+        async function pushAllTablesToCloud(showNotification = true) {
+            const url = getCloudSyncUrl();
+            if (!url) {
+                if (showNotification) showToast('Cloud URL Missing', 'Please paste your Google Apps Script Web App URL first.', true);
+                return;
+            }
+            setCloudBadgeStatus('syncing', 'Pushing All Data...');
+            const payloadData = {};
+            Object.keys(TABLE_KEY_MAP).forEach(tableName => {
+                const raw = localStorage.getItem(TABLE_KEY_MAP[tableName]);
+                payloadData[tableName] = raw ? JSON.parse(raw) : null;
+            });
+
+            try {
+                await fetch(url, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({
+                        action: 'SYNC_ALL',
+                        data: payloadData
+                    })
+                });
+                localStorage.removeItem(DB_KEYS.PENDING_SYNC);
+                setCloudBadgeStatus('synced', 'All Data Pushed');
+                if (showNotification) showToast('Cloud Push Complete', 'All local students, teachers, quizzes, and grades pushed to Google Sheets.');
+            } catch (err) {
+                setCloudBadgeStatus('pending', 'Push Failed');
+                if (showNotification) showToast('Cloud Push Error', 'Could not reach Google Sheets. Check connection.', true);
+            }
+        }
+
+        // Pull latest records from Google Sheets Cloud into browser localStorage
+        async function pullFromCloud(showNotification = false) {
+            const url = getCloudSyncUrl();
+            if (!url) {
+                setCloudBadgeStatus('local', 'Local Mode');
+                if (showNotification) showToast('Local Mode Active', 'HOD can add a Google Apps Script URL in Tab 6 to enable Cloud Sync.');
+                return false;
+            }
+            if (!navigator.onLine) {
+                setCloudBadgeStatus('pending', 'Offline Mode');
+                return false;
+            }
+
+            setCloudBadgeStatus('syncing', 'Fetching Cloud Updates...');
+            try {
+                const res = await fetch(url + '?t=' + Date.now());
+                const json = await res.json();
+                if (json && json.status === 'success' && json.data) {
+                    let updatedAny = false;
+                    Object.keys(TABLE_KEY_MAP).forEach(tableName => {
+                        const cloudVal = json.data[tableName];
+                        if (cloudVal !== null && cloudVal !== undefined) {
+                            // Preserve cloudSyncUrl if pulling SETTINGS
+                            if (tableName === 'SETTINGS') {
+                                cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
+                            }
+                            localStorage.setItem(TABLE_KEY_MAP[tableName], JSON.stringify(cloudVal));
+                            updatedAny = true;
+                        }
+                    });
+
+                    // Refresh active logged-in user session if their record updated
+                    const curr = getCurrentUser();
+                    if (curr && curr.role === 'student') {
+                        const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                        const freshStu = stuList.find(s => s.id === curr.id);
+                        if (freshStu) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'student', ...freshStu }));
+                    } else if (curr && curr.role === 'teacher') {
+                        const tchList = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                        const freshTch = tchList.find(t => t.id === curr.id);
+                        if (freshTch) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'teacher', ...freshTch }));
+                    }
+
+                    setCloudBadgeStatus('synced', 'Cloud Synced');
+                    if (showNotification) showToast('Cloud Synced!', 'Latest updates from teachers and students loaded.');
+                    if (updatedAny && !activeQuizState.timerInterval) {
+                        renderApp();
+                    }
+                    return true;
+                }
+            } catch (err) {
+                setCloudBadgeStatus('pending', 'Cloud Unreachable');
+                if (showNotification) showToast('Sync Notice', 'Using cached offline data.', true);
+            }
+            return false;
+        }
 
         // --- INITIALIZE SAMPLE DATA ---
         function initDatabase() {
@@ -118,7 +294,8 @@
                     schoolName: 'Assin Nsuta SHS',
                     departmentName: 'ICT Department LMS & Portal',
                     motto: 'Excellence Through Technology & Discipline',
-                    logoUrl: '' // Uses fallback academic crest when empty
+                    logoUrl: '',
+                    cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL
                 };
                 localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(defaultSettings));
             }
@@ -263,7 +440,7 @@
 
             if (!localStorage.getItem(DB_KEYS.FAQS)) {
                 const sampleFaqs = [
-                    { id: 'FAQ-1', question: 'How do I change my login passcode?', answer: 'Click the "My Profile & Security" button in the top navigation bar. Your Student ID and Username are fixed by the ICT Department, but you can update your passcode at any time.' },
+                    { id: 'FAQ-1', question: 'How do I change my login passcode?', answer: 'Click the "My Profile & Security" button in the top navigation bar. Your Student ID and Username are fixed by the ICT Department, but you can update your passcode at any time and it will sync across devices.' },
                     { id: 'FAQ-2', question: 'How do I submit scores for external Google Forms or GitHub HTML tests?', answer: 'Open the external link from your Learning Hub or Assessments tab. Once completed, click "Submit Score Claim" on the card to send your score and verification note directly to the Unified Gradebook.' },
                     { id: 'FAQ-3', question: 'How do I take a built-in ICT Quiz and get my score?', answer: 'Navigate to the "Quizzes & My Gradebook" tab in your Student Portal, click "Start Interactive Quiz Now", answer the multiple-choice questions before the countdown timer ends, and click Submit for instant auto-grading.' }
                 ];
@@ -274,7 +451,7 @@
         // --- BRANDING & LOGO HELPERS ---
         function getSettings() {
             const raw = localStorage.getItem(DB_KEYS.SETTINGS);
-            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '' };
+            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL };
         }
 
         function renderSchoolLogoHTML(sizeClasses = 'w-12 h-12', iconTextSize = 'text-xl') {
@@ -343,7 +520,6 @@
             return options;
         }
 
-        // Check if an item assigned to `targetGroup` applies to a student in `studentClass`
         function isAssignedToStudent(targetGroup, studentClass) {
             if (!studentClass) return false;
             if (targetGroup === 'All Classes') return true;
@@ -354,7 +530,7 @@
             return false;
         }
 
-        // --- MY PROFILE & SECURITY MODAL (Passcode Change Only for Students; Passcode Change for Teachers) ---
+        // --- MY PROFILE & SECURITY MODAL (Passcode Change Only for Students; Syncs to Cloud) ---
         function openProfileSecurityModal() {
             const user = getCurrentUser();
             if (!user) return;
@@ -460,11 +636,11 @@
                     return;
                 }
                 stu.passcode = newPass;
-                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
                 user.passcode = newPass;
                 localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+                saveTableAndSync('STUDENTS', students);
                 closeModal();
-                showToast('Passcode Updated!', 'Your new student login passcode has been saved.');
+                showToast('Passcode Updated & Synced!', 'Your new student login passcode has been saved to the cloud.');
             } else if (user.role === 'teacher') {
                 const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
                 const tch = teachers.find(t => t.id === user.id);
@@ -473,15 +649,14 @@
                     return;
                 }
                 tch.passcode = newPass;
-                localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify(teachers));
                 user.passcode = newPass;
                 localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+                saveTableAndSync('TEACHERS', teachers);
                 closeModal();
-                showToast('Staff Passcode Updated!', 'Your new teacher login passcode has been saved.');
+                showToast('Staff Passcode Synced!', 'Your new teacher login passcode has been saved to the cloud.');
             }
         }
 
-        // Staff Reset Student Passcode Modal
         function openResetStudentPasscodeModal(stuId) {
             const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
             const s = students.find(item => item.id === stuId);
@@ -510,7 +685,7 @@
                 `,
                 `
                     <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
-                    <button onclick="saveStaffStudentReset('${s.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Save Changes</button>
+                    <button onclick="saveStaffStudentReset('${s.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Save & Sync</button>
                 `
             );
         }
@@ -527,14 +702,13 @@
             if (s) {
                 s.classGroup = newClass;
                 s.passcode = newPass;
-                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
+                saveTableAndSync('STUDENTS', students);
                 closeModal();
-                showToast('Student Updated', `${s.name}'s passcode/class updated.`);
+                showToast('Student Updated & Synced', `${s.name}'s passcode/class updated.`);
                 renderApp('students');
             }
         }
 
-        // Calculate Student Lesson Completion Progress
         function getStudentProgressStats(studentId, studentClass) {
             const materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
             const progressMap = JSON.parse(localStorage.getItem(DB_KEYS.PROGRESS) || '{}');
@@ -549,7 +723,6 @@
             return { completed: completedCount, total: totalAssigned, percentage };
         }
 
-        // Calculate Student Overall Assessment Average (Native Quizzes + Google Forms + GitHub HTML Apps)
         function getStudentQuizAverage(studentId) {
             const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]').filter(a => a.studentId === studentId);
             if (attempts.length === 0) return { count: 0, avg: null };
@@ -557,7 +730,6 @@
             return { count: attempts.length, avg: Math.round(sum / attempts.length) };
         }
 
-        // Get all Gradable Assessments (Native Quizzes + Gradable External Materials)
         function getAllGradableAssessments() {
             const quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]').map(q => ({
                 id: q.id,
@@ -578,13 +750,16 @@
             return [...quizzes, ...extMats];
         }
 
-        // --- NETWORK STATUS MONITOR ---
+        // --- NETWORK STATUS & AUTO-FLUSH OFFLINE QUEUE ---
         function updateNetworkStatus() {
             const badge = document.getElementById('network-badge');
             if (!badge) return;
             if (navigator.onLine) {
                 badge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800";
-                badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online Mode (LocalStorage Synced)`;
+                badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online Mode`;
+                if (localStorage.getItem(DB_KEYS.PENDING_SYNC) === 'true' && getCloudSyncUrl()) {
+                    pushAllTablesToCloud(false);
+                }
             } else {
                 badge.className = "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800";
                 badge.innerHTML = `<span class="w-2 h-2 mr-1.5 bg-amber-500 rounded-full"></span> Offline Mode (Working Locally)`;
@@ -593,7 +768,6 @@
         window.addEventListener('online', updateNetworkStatus);
         window.addEventListener('offline', updateNetworkStatus);
 
-        // --- ROUTER & VIEW CONTROLLER ---
         function getCurrentUser() {
             const userStr = localStorage.getItem(DB_KEYS.CURRENT_USER);
             return userStr ? JSON.parse(userStr) : null;
@@ -618,9 +792,10 @@
             updateNetworkStatus();
         }
 
-        // --- 1. LOGIN VIEW (Multi-Role: Student, Teacher, and Super Admin) ---
+        // --- 1. LOGIN VIEW ---
         function getLoginViewHTML() {
             const s = getSettings();
+            const hasCloud = Boolean(getCloudSyncUrl());
             return `
                 <div class="flex-grow flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950">
                     <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 border-t-4 border-indigo-600">
@@ -631,6 +806,11 @@
                             <h1 class="text-2xl font-extrabold text-slate-900 tracking-tight">${s.schoolName}</h1>
                             <p class="text-xs text-indigo-600 font-bold uppercase tracking-wider mt-0.5">${s.departmentName}</p>
                             <p class="text-[11px] text-slate-400 italic mt-0.5">"${s.motto}"</p>
+                            <div class="mt-2 flex justify-center">
+                                <button type="button" onclick="pullFromCloud(true)" class="text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${hasCloud ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}">
+                                    <i class="fas fa-sync-alt mr-1"></i>${hasCloud ? 'Cloud Sync Active (Click to Refresh)' : 'Offline Local Storage Mode'}
+                                </button>
+                            </div>
                         </div>
 
                         <!-- 3-Way Role Switcher -->
@@ -761,13 +941,20 @@
         }
 
         function attachLoginListeners() {
-            document.getElementById('form-student-login').addEventListener('submit', (e) => {
+            document.getElementById('form-student-login').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const inputUser = document.getElementById('stu-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('stu-passcode').value.trim();
 
-                const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-                const student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
+                let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                let student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
+
+                // If not found locally and cloud URL is configured, fetch latest cloud roster first
+                if (!student && getCloudSyncUrl() && navigator.onLine) {
+                    await pullFromCloud(false);
+                    students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                    student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
+                }
 
                 if (student) {
                     localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'student', ...student }));
@@ -778,13 +965,19 @@
                 }
             });
 
-            document.getElementById('form-teacher-login').addEventListener('submit', (e) => {
+            document.getElementById('form-teacher-login').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const inputUser = document.getElementById('tch-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('tch-passcode').value.trim();
 
-                const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-                const teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
+                let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                let teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
+
+                if (!teacher && getCloudSyncUrl() && navigator.onLine) {
+                    await pullFromCloud(false);
+                    teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                    teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
+                }
 
                 if (teacher) {
                     localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'teacher', ...teacher }));
@@ -840,9 +1033,12 @@
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
+                            <button onclick="pullFromCloud(true)" class="bg-white/10 hover:bg-white/20 border border-white/20 text-xs px-3 py-2 rounded-lg font-semibold transition flex items-center space-x-1.5" title="Fetch latest updates from Google Sheets Cloud">
+                                <i class="fas fa-sync-alt"></i><span>Sync Now</span>
+                            </button>
                             ${isSuperAdmin ? `
                                 <button onclick="switchAdminTab('settings')" class="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs px-3 py-2 rounded-lg font-bold transition flex items-center space-x-1.5">
-                                    <i class="fas fa-image"></i><span>School Logo & Staff</span>
+                                    <i class="fas fa-cloud"></i><span>Logo, Staff & Cloud</span>
                                 </button>
                             ` : `
                                 <button onclick="openProfileSecurityModal()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs px-3 py-2 rounded-lg font-bold transition flex items-center space-x-1.5">
@@ -850,7 +1046,7 @@
                                 </button>
                             `}
                             <button onclick="openBackupModal()" class="bg-white/10 hover:bg-white/20 border border-white/20 text-xs px-3 py-2 rounded-lg font-semibold transition flex items-center space-x-1.5">
-                                <i class="fas fa-database"></i><span>Backup / Restore</span>
+                                <i class="fas fa-database"></i><span>Backup</span>
                             </button>
                             <button onclick="logout()" class="bg-red-600 hover:bg-red-700 text-xs px-3 py-2 rounded-lg font-semibold transition flex items-center space-x-1.5">
                                 <i class="fas fa-sign-out-alt"></i><span>Logout</span>
@@ -912,7 +1108,7 @@
                             <i class="fas fa-bullhorn"></i><span>5. Notices & Timetable</span>
                         </button>
                         <button onclick="switchAdminTab('settings')" id="atab-settings-btn" class="py-3.5 font-bold text-xs uppercase tracking-wider border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap flex items-center space-x-1.5">
-                            <i class="fas fa-id-badge"></i><span>6. ${isSuperAdmin ? 'Teachers & School Logo' : 'Department Staff Directory'}</span>
+                            <i class="fas fa-id-badge"></i><span>6. ${isSuperAdmin ? 'Teachers, Logo & Cloud Sync' : 'Department Staff Directory'}</span>
                         </button>
                     </div>
 
@@ -946,7 +1142,7 @@
                                     </div>
                                     <div class="sm:col-span-2">
                                         <button type="submit" class="w-full py-2.5 bg-indigo-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-indigo-700 transition shadow-sm">
-                                            <i class="fas fa-user-plus mr-1"></i> Create Student Account & Generate ANASS ID
+                                            <i class="fas fa-user-plus mr-1"></i> Create Student Account & Sync to Cloud
                                         </button>
                                     </div>
                                 </form>
@@ -966,7 +1162,7 @@
                                     <textarea id="bulk-stu-names" rows="3" placeholder="Nana Ama&#10;Kojo Antwi&#10;Efya Mensah" class="w-full px-3 py-2 border rounded-lg text-xs"></textarea>
                                 </div>
                                 <button onclick="bulkGenerateStudents()" class="w-full mt-3 py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition">
-                                    <i class="fas fa-magic mr-1"></i> Bulk Generate Credentials
+                                    <i class="fas fa-magic mr-1"></i> Bulk Generate & Sync
                                 </button>
                             </div>
                         </div>
@@ -1007,7 +1203,7 @@
                         </div>
                     </div>
 
-                    <!-- TAB 2: NATIVE QUIZ BUILDER & UNIFIED GRADEBOOK (Native + Google Forms + GitHub HTML Apps) -->
+                    <!-- TAB 2: NATIVE QUIZ BUILDER & UNIFIED GRADEBOOK -->
                     <div id="atab-quizzes" class="space-y-6 hidden">
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                             <!-- Left Column: Native Quiz Builder -->
@@ -1069,11 +1265,11 @@
                                 </div>
 
                                 <button type="button" onclick="publishNativeQuiz()" class="w-full py-3 bg-purple-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-purple-700 transition shadow-md">
-                                    <i class="fas fa-paper-plane mr-1"></i> Publish Native Quiz to Student Portal
+                                    <i class="fas fa-paper-plane mr-1"></i> Publish Native Quiz & Sync to Cloud
                                 </button>
                             </div>
 
-                            <!-- Right Column: Record External Assessment Score (Google Forms / GitHub HTML Apps) -->
+                            <!-- Right Column: Record External Assessment Score -->
                             <div class="lg:col-span-5 space-y-6">
                                 <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                                     <div class="flex justify-between items-center border-b pb-3">
@@ -1123,7 +1319,7 @@
                                             <input type="text" id="ext-note" placeholder="e.g. Imported from Google Forms Sheet / Verified" class="w-full px-3 py-2 border rounded-lg text-xs">
                                         </div>
                                         <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-sm">
-                                            <i class="fas fa-save mr-1"></i> Save Score to Unified Gradebook
+                                            <i class="fas fa-save mr-1"></i> Save Score & Sync Gradebook
                                         </button>
                                     </form>
                                 </div>
@@ -1151,7 +1347,7 @@
                             </div>
                         </div>
 
-                        <!-- Unified Gradebook Table (Native Quizzes + Google Forms + GitHub HTML Apps) -->
+                        <!-- Unified Gradebook Table -->
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                             <div class="p-4 bg-slate-50 border-b flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
                                 <div>
@@ -1248,7 +1444,7 @@
                                     </div>
                                 </div>
                                 <div class="sm:col-span-3">
-                                    <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition">Publish Resource / External Assessment to Student Hub</button>
+                                    <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition">Publish Resource & Sync to Cloud</button>
                                 </div>
                             </form>
                         </div>
@@ -1317,7 +1513,6 @@
 
                     <!-- TAB 5: ANNOUNCEMENTS & LAB TIMETABLE -->
                     <div id="atab-announcements" class="grid grid-cols-1 lg:grid-cols-2 gap-6 hidden">
-                        <!-- Announcements Column -->
                         <div class="space-y-4">
                             <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
                                 <h3 class="text-sm font-bold text-slate-900 mb-3 flex items-center space-x-2">
@@ -1327,7 +1522,7 @@
                                 <form id="form-add-announcement" class="space-y-3">
                                     <input type="text" id="ann-title" required placeholder="Announcement Headline..." class="w-full px-3 py-2 border rounded-lg text-sm">
                                     <textarea id="ann-content" required rows="2" placeholder="Details for students..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea>
-                                    <button type="submit" class="w-full py-2 bg-amber-500 text-white rounded-lg font-bold text-xs uppercase hover:bg-amber-600 transition">Post Notice</button>
+                                    <button type="submit" class="w-full py-2 bg-amber-500 text-white rounded-lg font-bold text-xs uppercase hover:bg-amber-600 transition">Post Notice & Sync</button>
                                 </form>
                             </div>
                             <div class="bg-white rounded-xl shadow-sm border border-slate-200 divide-y">
@@ -1344,7 +1539,6 @@
                             </div>
                         </div>
 
-                        <!-- Lab Timetable Column -->
                         <div class="space-y-4">
                             <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
                                 <h3 class="text-sm font-bold text-slate-900 mb-3 flex items-center space-x-2">
@@ -1364,7 +1558,7 @@
                                     </select>
                                     <input type="text" id="tt-time" required placeholder="08:00 AM - 10:00 AM" class="px-3 py-2 border rounded-lg text-xs">
                                     <input type="text" id="tt-lab" required placeholder="ICT Lab 1 / Instructor" class="px-3 py-2 border rounded-lg text-xs">
-                                    <button type="submit" class="sm:col-span-2 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs uppercase hover:bg-indigo-700 transition">Add Timetable Slot</button>
+                                    <button type="submit" class="sm:col-span-2 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs uppercase hover:bg-indigo-700 transition">Add Timetable Slot & Sync</button>
                                 </form>
                             </div>
                             <div class="bg-white rounded-xl shadow-sm border border-slate-200 divide-y">
@@ -1382,68 +1576,82 @@
                         </div>
                     </div>
 
-                    <!-- TAB 6: SCHOOL LOGO / BRANDING (ADMIN ONLY) & STAFF DIRECTORY (CREDENTIALS HIDDEN FROM TEACHERS) -->
+                    <!-- TAB 6: SCHOOL LOGO / BRANDING (ADMIN ONLY), CLOUD SYNC & STAFF DIRECTORY -->
                     <div id="atab-settings" class="grid grid-cols-1 lg:grid-cols-12 gap-6 hidden">
-                        <!-- School Branding & Custom Logo Upload Widget (Strictly Locked for Teachers) -->
-                        <div class="lg:col-span-5 bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
-                            <div class="flex items-center justify-between border-b pb-3">
-                                <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
-                                    <i class="fas fa-shield-alt text-amber-500"></i>
-                                    <span>School Logo & Portal Branding</span>
-                                </h3>
-                                <span class="text-[10px] ${isSuperAdmin ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'} px-2 py-0.5 rounded font-bold uppercase">
-                                    ${isSuperAdmin ? 'HOD Control' : 'HOD Only'}
-                                </span>
-                            </div>
-
-                            <div class="flex items-center space-x-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                                ${renderSchoolLogoHTML('w-16 h-16', 'text-2xl')}
-                                <div>
-                                    <h4 class="font-extrabold text-sm text-slate-900">${s.schoolName}</h4>
-                                    <p class="text-xs text-indigo-600 font-semibold">${s.departmentName}</p>
-                                    <p class="text-[11px] text-slate-500 italic">"${s.motto}"</p>
+                        <div class="lg:col-span-5 space-y-6">
+                            <!-- School Branding & Custom Logo Upload Widget (Strictly Locked for Teachers) -->
+                            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                                <div class="flex items-center justify-between border-b pb-3">
+                                    <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
+                                        <i class="fas fa-shield-alt text-amber-500"></i>
+                                        <span>School Logo & Portal Branding</span>
+                                    </h3>
+                                    <span class="text-[10px] ${isSuperAdmin ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'} px-2 py-0.5 rounded font-bold uppercase">
+                                        ${isSuperAdmin ? 'HOD Control' : 'HOD Only'}
+                                    </span>
                                 </div>
-                            </div>
 
-                            ${isSuperAdmin ? `
-                                <form id="form-save-branding" class="space-y-3">
+                                <div class="flex items-center space-x-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                    ${renderSchoolLogoHTML('w-16 h-16', 'text-2xl')}
                                     <div>
-                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Upload School Logo Image File (PNG / JPG / SVG)</label>
-                                        <input type="file" id="logo-file-input" accept="image/*" onchange="handleLogoFileUpload(event)" class="w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 border rounded-lg p-1.5">
+                                        <h4 class="font-extrabold text-sm text-slate-900">${s.schoolName}</h4>
+                                        <p class="text-xs text-indigo-600 font-semibold">${s.departmentName}</p>
+                                        <p class="text-[11px] text-slate-500 italic">"${s.motto}"</p>
                                     </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Or Paste Direct School Crest Image URL</label>
-                                        <input type="text" id="brand-logo-url" value="${s.logoUrl}" placeholder="https://... or Base64 data URI" class="w-full px-3 py-2 border rounded-lg text-xs">
-                                    </div>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                </div>
+
+                                ${isSuperAdmin ? `
+                                    <form id="form-save-branding" class="space-y-3">
                                         <div>
-                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">School Name</label>
-                                            <input type="text" id="brand-school-name" value="${s.schoolName}" required class="w-full px-3 py-2 border rounded-lg text-xs">
+                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Upload School Logo Image File (PNG / JPG / SVG)</label>
+                                            <input type="file" id="logo-file-input" accept="image/*" onchange="handleLogoFileUpload(event)" class="w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 border rounded-lg p-1.5">
                                         </div>
                                         <div>
-                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Department Title</label>
-                                            <input type="text" id="brand-dept-name" value="${s.departmentName}" required class="w-full px-3 py-2 border rounded-lg text-xs">
+                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Or Paste Direct School Crest Image URL</label>
+                                            <input type="text" id="brand-logo-url" value="${s.logoUrl}" placeholder="https://... or Base64 data URI" class="w-full px-3 py-2 border rounded-lg text-xs">
                                         </div>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs font-bold text-slate-600 uppercase mb-1">School Name</label>
+                                                <input type="text" id="brand-school-name" value="${s.schoolName}" required class="w-full px-3 py-2 border rounded-lg text-xs">
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Department Title</label>
+                                                <input type="text" id="brand-dept-name" value="${s.departmentName}" required class="w-full px-3 py-2 border rounded-lg text-xs">
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">School Motto</label>
+                                            <input type="text" id="brand-motto" value="${s.motto}" class="w-full px-3 py-2 border rounded-lg text-xs">
+                                        </div>
+                                        <div class="pt-2 border-t border-slate-200">
+                                            <label class="block text-xs font-bold text-indigo-800 uppercase mb-1"><i class="fas fa-cloud mr-1"></i>Google Sheets Cloud Sync Web App URL</label>
+                                            <input type="url" id="brand-cloud-url" value="${getCloudSyncUrl()}" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs bg-indigo-50/40 font-mono">
+                                        </div>
+                                        <div class="flex space-x-2 pt-1">
+                                            <button type="submit" class="flex-1 py-2.5 bg-primary text-white rounded-lg font-bold text-xs uppercase hover:bg-blue-900 transition">
+                                                <i class="fas fa-check mr-1"></i> Save Logo & Cloud Settings
+                                            </button>
+                                            <button type="button" onclick="resetDefaultLogo()" class="px-3 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-bold text-xs transition">
+                                                Reset Crest
+                                            </button>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-2 pt-1">
+                                            <button type="button" onclick="pushAllTablesToCloud(true)" class="py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] uppercase transition">
+                                                <i class="fas fa-cloud-upload-alt mr-1"></i> Push All to Cloud
+                                            </button>
+                                            <button type="button" onclick="pullFromCloud(true)" class="py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] uppercase transition">
+                                                <i class="fas fa-cloud-download-alt mr-1"></i> Pull from Cloud
+                                            </button>
+                                        </div>
+                                    </form>
+                                ` : `
+                                    <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                                        <div class="font-bold"><i class="fas fa-lock mr-1"></i>Restricted Access</div>
+                                        <p>Only the Head of Department (Super Admin) is authorized to upload, change, or reset the official school logo and cloud configuration.</p>
                                     </div>
-                                    <div>
-                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">School Motto</label>
-                                        <input type="text" id="brand-motto" value="${s.motto}" class="w-full px-3 py-2 border rounded-lg text-xs">
-                                    </div>
-                                    <div class="flex space-x-2 pt-1">
-                                        <button type="submit" class="flex-1 py-2.5 bg-primary text-white rounded-lg font-bold text-xs uppercase hover:bg-blue-900 transition">
-                                            <i class="fas fa-check mr-1"></i> Save School Logo & Branding
-                                        </button>
-                                        <button type="button" onclick="resetDefaultLogo()" class="px-3 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-bold text-xs transition">
-                                            Reset Crest
-                                        </button>
-                                    </div>
-                                </form>
-                            ` : `
-                                <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
-                                    <div class="font-bold"><i class="fas fa-lock mr-1"></i>Restricted Access</div>
-                                    <p>Only the Head of Department (Super Admin) is authorized to upload, change, or reset the official school logo and portal branding.</p>
-                                </div>
-                            `}
+                                `}
+                            </div>
                         </div>
 
                         <!-- ICT Department Teachers / Staff Management -->
@@ -1482,7 +1690,7 @@
                                         </div>
                                         <div class="sm:col-span-2">
                                             <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase hover:bg-emerald-700 transition">
-                                                <i class="fas fa-user-tie mr-1"></i> Create Teacher Account
+                                                <i class="fas fa-user-tie mr-1"></i> Create Teacher Account & Sync
                                             </button>
                                         </div>
                                     </form>
@@ -1639,8 +1847,8 @@
             if (item) {
                 item.status = 'Verified';
                 item.recordedBy = user ? user.name : 'Teacher';
-                localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
-                showToast('Score Verified', `${item.studentName}'s external assessment score approved.`);
+                saveTableAndSync('QUIZ_ATTEMPTS', attempts);
+                showToast('Score Verified & Synced', `${item.studentName}'s external assessment score approved.`);
                 renderApp('quizzes');
             }
         }
@@ -1671,7 +1879,7 @@
                 `,
                 `
                     <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
-                    <button onclick="saveEditedGradebookScore('${item.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Update Score</button>
+                    <button onclick="saveEditedGradebookScore('${item.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Update & Sync</button>
                 `
             );
         }
@@ -1691,9 +1899,9 @@
                 item.verificationNote = note;
                 item.status = 'Verified';
                 item.recordedBy = user ? user.name : 'Teacher';
-                localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
+                saveTableAndSync('QUIZ_ATTEMPTS', attempts);
                 closeModal();
-                showToast('Gradebook Updated', 'Score and percentage recalculated.');
+                showToast('Gradebook Updated & Synced', 'Score and percentage recalculated.');
                 renderApp('quizzes');
             }
         }
@@ -1701,7 +1909,7 @@
         function deleteGradebookEntry(attemptId) {
             let attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
             attempts = attempts.filter(a => a.id !== attemptId);
-            localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
+            saveTableAndSync('QUIZ_ATTEMPTS', attempts);
             showToast('Entry Removed', 'Gradebook score record deleted.');
             renderApp('quizzes');
         }
@@ -1725,7 +1933,7 @@
                 `,
                 `
                     <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
-                    <button onclick="processBulkExternalScores()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold">Import Scores</button>
+                    <button onclick="processBulkExternalScores()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold">Import & Sync</button>
                 `
             );
         }
@@ -1777,9 +1985,9 @@
                 }
             });
 
-            localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
+            saveTableAndSync('QUIZ_ATTEMPTS', attempts);
             closeModal();
-            showToast('Bulk Score Import Complete', `Imported ${importedCount} student score(s) into the Gradebook.`);
+            showToast('Bulk Score Import Synced', `Imported ${importedCount} student score(s) into the Gradebook.`);
             renderApp('quizzes');
         }
 
@@ -1797,7 +2005,7 @@
                 const base64Url = e.target.result;
                 const urlInput = document.getElementById('brand-logo-url');
                 if (urlInput) urlInput.value = base64Url;
-                showToast('Logo Image Loaded', 'Click "Save School Logo & Branding" to apply across the portal.');
+                showToast('Logo Image Loaded', 'Click "Save Logo & Cloud Settings" to apply across the portal.');
             };
             reader.readAsDataURL(file);
         }
@@ -1810,7 +2018,7 @@
             }
             const s = getSettings();
             s.logoUrl = '';
-            localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(s));
+            saveTableAndSync('SETTINGS', s);
             showToast('Crest Reset', 'Reverted to default Assin Nsuta SHS academic shield.');
             renderApp('settings');
         }
@@ -1820,8 +2028,8 @@
             if (!user || user.role !== 'admin') return;
             let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
             teachers = teachers.filter(t => t.id !== id);
-            localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify(teachers));
-            showToast('Staff Removed', 'Teacher account removed.');
+            saveTableAndSync('TEACHERS', teachers);
+            showToast('Staff Removed', 'Teacher account removed and synced.');
             renderApp('settings');
         }
 
@@ -1894,24 +2102,24 @@
                 students.unshift({ id, name, username, passcode, classGroup });
             });
 
-            localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
-            showToast('Bulk Import Complete', `Generated ANASS credentials for ${lines.length} student(s) in ${classGroup}.`);
+            saveTableAndSync('STUDENTS', students);
+            showToast('Bulk Import Synced', `Generated ANASS credentials for ${lines.length} student(s) in ${classGroup}.`);
             renderApp('students');
         }
 
         function deleteStudent(id) {
             let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
             students = students.filter(s => s.id !== id);
-            localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
-            showToast('Student Removed', 'Student record deleted.');
+            saveTableAndSync('STUDENTS', students);
+            showToast('Student Removed', 'Student record deleted and synced.');
             renderApp('students');
         }
 
         function deleteMaterial(id) {
             let materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
             materials = materials.filter(m => m.id !== id);
-            localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify(materials));
-            showToast('Material Removed', 'Resource removed from hub.');
+            saveTableAndSync('MATERIALS', materials);
+            showToast('Material Removed', 'Resource removed from hub and synced.');
             renderApp('content');
         }
 
@@ -1931,7 +2139,7 @@
                 `,
                 `
                     <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
-                    <button onclick="saveSubmissionGrade('${sub.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Save Feedback</button>
+                    <button onclick="saveSubmissionGrade('${sub.id}')" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold">Save & Sync</button>
                 `
             );
         }
@@ -1942,9 +2150,9 @@
             const sub = submissions.find(s => s.id === subId);
             if (sub && status) {
                 sub.status = status;
-                localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+                saveTableAndSync('SUBMISSIONS', submissions);
                 closeModal();
-                showToast('Project Graded', `Updated status for ${sub.studentName}.`);
+                showToast('Project Graded & Synced', `Updated status for ${sub.studentName}.`);
                 renderApp('submissions');
             }
         }
@@ -1952,7 +2160,7 @@
         function deleteSubmission(id) {
             let submissions = JSON.parse(localStorage.getItem(DB_KEYS.SUBMISSIONS) || '[]');
             submissions = submissions.filter(s => s.id !== id);
-            localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify(submissions));
+            saveTableAndSync('SUBMISSIONS', submissions);
             showToast('Submission Deleted', 'Project submission removed.');
             renderApp('submissions');
         }
@@ -1960,7 +2168,7 @@
         function deleteAnnouncement(id) {
             let announcements = JSON.parse(localStorage.getItem(DB_KEYS.ANNOUNCEMENTS) || '[]');
             announcements = announcements.filter(a => a.id !== id);
-            localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify(announcements));
+            saveTableAndSync('ANNOUNCEMENTS', announcements);
             showToast('Notice Deleted', 'Announcement removed.');
             renderApp('announcements');
         }
@@ -1968,7 +2176,7 @@
         function deleteTimetable(id) {
             let timetable = JSON.parse(localStorage.getItem(DB_KEYS.TIMETABLE) || '[]');
             timetable = timetable.filter(t => t.id !== id);
-            localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify(timetable));
+            saveTableAndSync('TIMETABLE', timetable);
             showToast('Schedule Removed', 'Timetable slot deleted.');
             renderApp('announcements');
         }
@@ -2045,16 +2253,16 @@
                 questions: [...builderQuestions]
             });
 
-            localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify(quizzes));
+            saveTableAndSync('QUIZZES', quizzes);
             builderQuestions = [];
-            showToast('Quiz Published!', `"${title}" is now live for ${classGroup}.`);
+            showToast('Quiz Published & Synced!', `"${title}" is now live for ${classGroup}.`);
             renderApp('quizzes');
         }
 
         function deleteQuiz(id) {
             let quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]');
             quizzes = quizzes.filter(q => q.id !== id);
-            localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify(quizzes));
+            saveTableAndSync('QUIZZES', quizzes);
             showToast('Quiz Deleted', 'Quiz removed from portal.');
             renderApp('quizzes');
         }
@@ -2078,8 +2286,8 @@
                     const passcode = customPass || Math.floor(1000 + Math.random() * 9000).toString();
 
                     students.unshift({ id, name, username, passcode, classGroup });
-                    localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
-                    showToast('Credentials Created', `${name} (${id}) -> User: ${username} | PIN: ${passcode}`);
+                    saveTableAndSync('STUDENTS', students);
+                    showToast('Credentials Created & Synced', `${name} (${id}) -> User: ${username} | PIN: ${passcode}`);
                     renderApp('students');
                 });
             }
@@ -2133,8 +2341,8 @@
                         date: nowStr
                     });
 
-                    localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
-                    showToast('External Score Saved', `Logged ${score}/${total} (${percentage}%) for ${stu.name}.`);
+                    saveTableAndSync('QUIZ_ATTEMPTS', attempts);
+                    showToast('External Score Synced', `Logged ${score}/${total} (${percentage}%) for ${stu.name}.`);
                     renderApp('quizzes');
                 });
             }
@@ -2164,8 +2372,8 @@
                         author: user ? user.name : 'ICT Admin',
                         date: new Date().toISOString().split('T')[0]
                     });
-                    localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify(materials));
-                    showToast('Resource Published', 'Material / External Assessment added to student hub.');
+                    saveTableAndSync('MATERIALS', materials);
+                    showToast('Resource Published & Synced', 'Material / External Assessment added to student hub.');
                     renderApp('content');
                 });
             }
@@ -2185,8 +2393,8 @@
                         author: user ? user.name : 'ICT Department',
                         date: new Date().toISOString().split('T')[0]
                     });
-                    localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify(announcements));
-                    showToast('Notice Posted', 'Department announcement broadcasted.');
+                    saveTableAndSync('ANNOUNCEMENTS', announcements);
+                    showToast('Notice Posted & Synced', 'Department announcement broadcasted.');
                     renderApp('announcements');
                 });
             }
@@ -2202,8 +2410,8 @@
 
                     const timetable = JSON.parse(localStorage.getItem(DB_KEYS.TIMETABLE) || '[]');
                     timetable.push({ id: genId('TT'), classGroup, day, time, lab, instructor: user ? user.name : '' });
-                    localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify(timetable));
-                    showToast('Schedule Updated', 'Lab slot added.');
+                    saveTableAndSync('TIMETABLE', timetable);
+                    showToast('Schedule Updated & Synced', 'Lab slot added.');
                     renderApp('announcements');
                 });
             }
@@ -2216,9 +2424,14 @@
                     const schoolName = document.getElementById('brand-school-name').value.trim();
                     const departmentName = document.getElementById('brand-dept-name').value.trim();
                     const motto = document.getElementById('brand-motto').value.trim();
+                    const cloudSyncUrl = document.getElementById('brand-cloud-url').value.trim();
 
-                    localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify({ schoolName, departmentName, motto, logoUrl }));
-                    showToast('Branding Updated!', 'School logo and header details saved across the portal.');
+                    if (cloudSyncUrl) {
+                        localStorage.setItem(DB_KEYS.CLOUD_URL, cloudSyncUrl);
+                    }
+                    const newSettings = { schoolName, departmentName, motto, logoUrl, cloudSyncUrl };
+                    saveTableAndSync('SETTINGS', newSettings);
+                    showToast('Settings & Cloud URL Saved!', 'School branding and cloud configuration updated.');
                     renderApp('settings');
                 });
             }
@@ -2239,14 +2452,14 @@
                     const passcode = customPass || Math.floor(1000 + Math.random() * 9000).toString();
 
                     teachers.push({ id, name, username, passcode, assignedClass, subjectRole });
-                    localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify(teachers));
-                    showToast('Teacher Added!', `${name} -> Username: ${username} | PIN: ${passcode}`);
+                    saveTableAndSync('TEACHERS', teachers);
+                    showToast('Teacher Added & Synced!', `${name} -> Username: ${username} | PIN: ${passcode}`);
                     renderApp('settings');
                 });
             }
         }
 
-        // --- 3. STUDENT PORTAL VIEW (With My Profile & Security Button, Progress Bar, Native Quiz Runner & External Claims) ---
+        // --- 3. STUDENT PORTAL VIEW ---
         function getStudentDashboardHTML(user) {
             const s = getSettings();
             const allMaterials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
@@ -2278,7 +2491,10 @@
                                 <p class="text-xs text-indigo-200">Assigned Class: <span class="bg-emerald-600 px-2 py-0.5 rounded text-white font-bold">${user.classGroup}</span> • Username: <span class="font-mono text-indigo-200">${user.username}</span></p>
                             </div>
                         </div>
-                        <div class="flex items-center space-x-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button onclick="pullFromCloud(true)" class="bg-white/10 hover:bg-white/20 border border-white/20 text-xs px-3 py-2 rounded-lg font-semibold transition flex items-center space-x-1.5">
+                                <i class="fas fa-sync-alt"></i><span>Sync Updates</span>
+                            </button>
                             <button onclick="openProfileSecurityModal()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs px-3.5 py-2 rounded-lg font-bold transition flex items-center space-x-1.5 shadow-sm">
                                 <i class="fas fa-user-shield"></i><span>My Profile & Security</span>
                             </button>
@@ -2343,7 +2559,7 @@
                         </button>
                     </div>
 
-                    <!-- STUDENT TAB 1: LEARNING MATERIALS & EXTERNAL GOOGLE FORM / GITHUB HTML LINKS -->
+                    <!-- STUDENT TAB 1: LEARNING MATERIALS & EXTERNAL LINKS -->
                     <div id="stab-materials" class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         ${relevantMaterials.length === 0 ? '<p class="text-slate-500 text-sm col-span-2">No learning materials assigned to your class yet.</p>' : relevantMaterials.map(m => {
                             const isDone = myCompletedIds.includes(m.id);
@@ -2389,10 +2605,8 @@
 
                     <!-- STUDENT TAB 2: NATIVE BUILT-IN QUIZZES & PERSONAL UNIFIED GRADEBOOK -->
                     <div id="stab-quizzes" class="space-y-6 hidden">
-                        <!-- Active Quiz Runner Box (Hidden until a quiz starts) -->
                         <div id="student-quiz-runner" class="hidden bg-white p-6 rounded-2xl shadow-lg border-2 border-indigo-600 space-y-6"></div>
 
-                        <!-- Available Native Quizzes Grid -->
                         <div>
                             <h3 class="text-sm font-extrabold uppercase text-slate-700 mb-3 flex items-center space-x-2">
                                 <i class="fas fa-laptop-medical text-purple-600"></i>
@@ -2427,7 +2641,6 @@
                             </div>
                         </div>
 
-                        <!-- Student Personal Unified Gradebook Table (Native + Google Forms + GitHub HTML Apps) -->
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                             <div class="p-4 bg-slate-50 border-b flex justify-between items-center">
                                 <h4 class="font-bold text-sm text-slate-800"><i class="fas fa-clipboard-check text-emerald-600 mr-1.5"></i>Your Unified Gradebook Transcript (Native Quizzes, Google Forms & GitHub Tasks)</h4>
@@ -2482,7 +2695,7 @@
                                     <input type="url" id="sub-url" required placeholder="https://github.com/..." class="w-full px-3 py-2 border rounded-lg text-sm">
                                 </div>
                                 <div class="sm:col-span-2">
-                                    <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition">Submit Project to ICT Department</button>
+                                    <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-lg font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition">Submit Project & Sync to Cloud</button>
                                 </div>
                             </form>
                         </div>
@@ -2546,7 +2759,6 @@
             document.getElementById(`stab-${tab}-btn`).className = "py-3.5 font-bold text-xs uppercase tracking-wider border-b-2 border-indigo-600 text-indigo-600 whitespace-nowrap flex items-center space-x-1.5";
         }
 
-        // --- TOGGLE LESSON COMPLETION ---
         function toggleMaterialCompletion(matId) {
             const user = getCurrentUser();
             if (!user) return;
@@ -2557,14 +2769,14 @@
 
             if (idx === -1) {
                 list.push(matId);
-                showToast('Progress Updated!', 'Lesson marked as completed.');
+                showToast('Progress Synced!', 'Lesson marked as completed.');
             } else {
                 list.splice(idx, 1);
-                showToast('Updated', 'Lesson marked as incomplete.');
+                showToast('Progress Updated', 'Lesson marked as incomplete.');
             }
 
             progressMap[user.id] = list;
-            localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify(progressMap));
+            saveTableAndSync('PROGRESS', progressMap);
             renderApp('materials');
         }
 
@@ -2640,7 +2852,7 @@
                 </div>
 
                 <button onclick="submitStudentQuiz(false)" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm uppercase tracking-wider shadow-md transition">
-                    <i class="fas fa-check-double mr-1"></i> Submit Quiz for Instant Auto-Grading
+                    <i class="fas fa-check-double mr-1"></i> Submit Quiz & Sync Score to Gradebook
                 </button>
             `;
         }
@@ -2651,11 +2863,13 @@
 
         function cancelQuizRunner() {
             if (activeQuizState.timerInterval) clearInterval(activeQuizState.timerInterval);
+            activeQuizState.timerInterval = null;
             document.getElementById('student-quiz-runner').classList.add('hidden');
         }
 
         function submitStudentQuiz(isAutoTimeout = false) {
             if (activeQuizState.timerInterval) clearInterval(activeQuizState.timerInterval);
+            activeQuizState.timerInterval = null;
             const qz = activeQuizState.quiz;
             const user = getCurrentUser();
             if (!qz || !user) return;
@@ -2698,10 +2912,10 @@
                 recordedBy: 'System',
                 date: nowStr
             });
-            localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
+            saveTableAndSync('QUIZ_ATTEMPTS', attempts);
 
             openModal(
-                isAutoTimeout ? 'Time Up! Quiz Auto-Submitted' : 'Quiz Graded Successfully!',
+                isAutoTimeout ? 'Time Up! Quiz Auto-Submitted' : 'Quiz Graded & Synced to Cloud!',
                 `
                     <div class="text-center p-4 bg-slate-50 rounded-xl border mb-4">
                         <p class="text-xs font-bold uppercase text-slate-500">${qz.title}</p>
@@ -2715,7 +2929,7 @@
             renderApp('quizzes');
         }
 
-        // --- STUDENT EXTERNAL SCORE CLAIM (For Google Forms / GitHub HTML Apps) ---
+        // --- STUDENT EXTERNAL SCORE CLAIM ---
         function openStudentExternalClaimModal(matId) {
             const materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
             const mat = materials.find(m => m.id === matId);
@@ -2743,7 +2957,7 @@
                 `,
                 `
                     <button onclick="closeModal()" class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Cancel</button>
-                    <button onclick="submitStudentExternalClaim('${mat.id}')" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-xs font-bold">Submit to Gradebook</button>
+                    <button onclick="submitStudentExternalClaim('${mat.id}')" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-xs font-bold">Submit & Sync to Gradebook</button>
                 `
             );
         }
@@ -2784,19 +2998,18 @@
                 recordedBy: 'Student Claim',
                 date: nowStr
             });
-            localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(attempts));
+            saveTableAndSync('QUIZ_ATTEMPTS', attempts);
 
-            // Also mark material completed automatically
             const progressMap = JSON.parse(localStorage.getItem(DB_KEYS.PROGRESS) || '{}');
             const list = progressMap[user.id] || [];
             if (!list.includes(mat.id)) {
                 list.push(mat.id);
                 progressMap[user.id] = list;
-                localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify(progressMap));
+                saveTableAndSync('PROGRESS', progressMap);
             }
 
             closeModal();
-            showToast('External Score Logged!', 'Sent to the Unified Gradebook for teacher verification.');
+            showToast('External Score Synced!', 'Sent to the Unified Gradebook for teacher verification.');
             renderApp('materials');
         }
 
@@ -2821,8 +3034,8 @@
                         date: new Date().toISOString().split('T')[0]
                     });
 
-                    localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify(submissions));
-                    showToast('Project Submitted!', 'Your link has been sent to the ICT Department.');
+                    saveTableAndSync('SUBMISSIONS', submissions);
+                    showToast('Project Submitted & Synced!', 'Your link has been sent to the ICT Department.');
                     renderApp('projects');
                 });
             }
@@ -2864,10 +3077,18 @@
 
         function openBackupModal() {
             openModal(
-                'Offline Database Backup & Restore',
+                'Database Backup, Restore & Cloud Sync',
                 `
-                    <p class="text-xs text-slate-600">Export all students, credentials, quizzes, grades, and progress to a JSON file to transfer across computers or back up on Google Drive.</p>
+                    <p class="text-xs text-slate-600">Export all students, credentials, quizzes, grades, and progress to a JSON file or synchronize with your Google Sheet.</p>
                     <div class="space-y-3 pt-2">
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="pushAllTablesToCloud(true)" class="py-2.5 bg-emerald-600 text-white rounded-lg text-xs font-bold uppercase hover:bg-emerald-700 transition">
+                                <i class="fas fa-cloud-upload-alt mr-1"></i> Push All to Cloud
+                            </button>
+                            <button onclick="pullFromCloud(true)" class="py-2.5 bg-blue-600 text-white rounded-lg text-xs font-bold uppercase hover:bg-blue-700 transition">
+                                <i class="fas fa-cloud-download-alt mr-1"></i> Pull from Cloud
+                            </button>
+                        </div>
                         <button onclick="exportFullDatabaseJSON()" class="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-bold uppercase hover:bg-indigo-700 transition">
                             <i class="fas fa-download mr-1"></i> Download Full LMS Database (.JSON)
                         </button>
@@ -2909,6 +3130,7 @@
                     });
                     closeModal();
                     showToast('Database Restored!', 'All LMS records have been imported.');
+                    if (getCloudSyncUrl()) pushAllTablesToCloud(false);
                     renderApp();
                 } catch (err) {
                     showToast('Import Error', 'Invalid backup JSON file.', true);
@@ -2919,15 +3141,21 @@
 
         function logout() {
             if (activeQuizState.timerInterval) clearInterval(activeQuizState.timerInterval);
+            activeQuizState.timerInterval = null;
             localStorage.removeItem(DB_KEYS.CURRENT_USER);
             showToast('Signed Out', 'Session closed safely.');
             renderApp();
         }
 
         // --- APP INITIALIZATION ---
-        window.onload = function() {
+        window.onload = async function() {
             initDatabase();
             renderApp();
+            if (getCloudSyncUrl()) {
+                await pullFromCloud(false);
+            } else {
+                setCloudBadgeStatus('local', 'Local Mode');
+            }
         };
     </script>
 </body>
