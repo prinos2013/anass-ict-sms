@@ -13,9 +13,9 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: '#1e3a8a',
-                        secondary: '#4f46e5',
-                        accent: '#059669',
+                        primary: '#1e3a8a', // Deep Academic Blue
+                        secondary: '#4f46e5', // Indigo
+                        accent: '#059669', // Emerald Green
                     }
                 }
             }
@@ -82,24 +82,24 @@
         // ====================================================================
         // PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL BELOW FOR GLOBAL SYNC:
         // ====================================================================
-        const DEFAULT_CLOUD_SYNC_URL = "https://script.google.com/macros/s/AKfycbwpEmJDwE3t6Rwd7OpGXznrmf9xHhO_-huBegagdSKv-rjbsGzXPE5f4PjFj0lKwMmAVA/exec"; 
+        const DEFAULT_CLOUD_SYNC_URL = ""; 
 
         // --- STORAGE & DATABASE KEYS ---
         const DB_KEYS = {
-            SETTINGS: 'anass_lms_settings_v8',
-            TEACHERS: 'anass_lms_teachers_v8',
-            STUDENTS: 'anass_lms_students_v8',
-            MATERIALS: 'anass_lms_materials_v8',
-            QUIZZES: 'anass_lms_quizzes_v8',
-            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v8',
-            PROGRESS: 'anass_lms_progress_v8',
-            ANNOUNCEMENTS: 'anass_lms_announcements_v8',
-            SUBMISSIONS: 'anass_lms_submissions_v8',
-            TIMETABLE: 'anass_lms_timetable_v8',
-            FAQS: 'anass_lms_faqs_v8',
-            CURRENT_USER: 'anass_lms_current_user_v8',
-            CLOUD_URL: 'anass_lms_cloud_url_v8',
-            PENDING_SYNC: 'anass_lms_pending_sync_v8'
+            SETTINGS: 'anass_lms_settings_v7',
+            TEACHERS: 'anass_lms_teachers_v7',
+            STUDENTS: 'anass_lms_students_v7',
+            MATERIALS: 'anass_lms_materials_v7',
+            QUIZZES: 'anass_lms_quizzes_v7',
+            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v7',
+            PROGRESS: 'anass_lms_progress_v7',
+            ANNOUNCEMENTS: 'anass_lms_announcements_v7',
+            SUBMISSIONS: 'anass_lms_submissions_v7',
+            TIMETABLE: 'anass_lms_timetable_v7',
+            FAQS: 'anass_lms_faqs_v7',
+            CURRENT_USER: 'anass_lms_current_user_v7',
+            CLOUD_URL: 'anass_lms_cloud_url_v7',
+            PENDING_SYNC: 'anass_lms_pending_sync_v7'
         };
 
         // Map internal DB_KEYS to Google Sheet Tab Names
@@ -252,10 +252,9 @@
                     Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                         const cloudVal = json.data[tableName];
                         if (cloudVal !== null && cloudVal !== undefined) {
-                            // Preserve cloudSyncUrl and adminPasscode if pulling SETTINGS
+                            // Preserve cloudSyncUrl if pulling SETTINGS
                             if (tableName === 'SETTINGS') {
                                 cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
-                                cloudVal.adminPasscode = cloudVal.adminPasscode || getSettings().adminPasscode || 'admin123';
                             }
                             localStorage.setItem(TABLE_KEY_MAP[tableName], JSON.stringify(cloudVal));
                             updatedAny = true;
@@ -296,8 +295,7 @@
                     departmentName: 'ICT Department LMS & Portal',
                     motto: 'Excellence Through Technology & Discipline',
                     logoUrl: '',
-                    cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL,
-                    adminPasscode: 'admin123'
+                    cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL
                 };
                 localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(defaultSettings));
             }
@@ -453,7 +451,7 @@
         // --- BRANDING & LOGO HELPERS ---
         function getSettings() {
             const raw = localStorage.getItem(DB_KEYS.SETTINGS);
-            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL, adminPasscode: 'admin123' };
+            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL };
         }
 
         function renderSchoolLogoHTML(sizeClasses = 'w-12 h-12', iconTextSize = 'text-xl') {
@@ -532,7 +530,7 @@
             return false;
         }
 
-        // --- MY PROFILE & SECURITY MODAL (Passcode Change for Students, Teachers & Admins; Syncs to Cloud) ---
+        // --- MY PROFILE & SECURITY MODAL (Passcode Change Only for Students; Syncs to Cloud) ---
         function openProfileSecurityModal() {
             const user = getCurrentUser();
             if (!user) return;
@@ -656,17 +654,6 @@
                 saveTableAndSync('TEACHERS', teachers);
                 closeModal();
                 showToast('Staff Passcode Synced!', 'Your new teacher login passcode has been saved to the cloud.');
-            } else if (user.role === 'admin') {
-                const s = getSettings();
-                const currentAdminPass = s.adminPasscode || 'admin123';
-                if (currentAdminPass !== currPass) {
-                    showToast('Incorrect Passcode', 'Your current Admin passcode is incorrect.', true);
-                    return;
-                }
-                s.adminPasscode = newPass;
-                saveTableAndSync('SETTINGS', s);
-                closeModal();
-                showToast('Admin Passcode Updated & Synced!', 'Your new Super Admin passcode has been saved to the cloud.');
             }
         }
 
@@ -863,7 +850,7 @@
                         <form id="form-admin-login" class="space-y-4 hidden">
                             <div>
                                 <label class="block text-xs font-bold text-slate-600 uppercase mb-1">HOD / Super Admin Passcode</label>
-                                <input type="password" id="admin-pass" required placeholder="Enter Admin Passcode" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-primary focus:outline-none text-sm">
+                                <input type="password" id="admin-pass" required placeholder="Enter passcode (admin123)" class="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-primary focus:outline-none text-sm">
                             </div>
                             <button type="submit" class="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm hover:bg-blue-900 transition shadow-md">Access Super Admin Control Suite</button>
                         </form>
@@ -949,7 +936,7 @@
 
         function quickAdminLogin() {
             switchLoginTab('admin');
-            document.getElementById('admin-pass').value = getSettings().adminPasscode || 'admin123';
+            document.getElementById('admin-pass').value = 'admin123';
             document.getElementById('form-admin-login').dispatchEvent(new Event('submit'));
         }
 
@@ -1003,10 +990,8 @@
 
             document.getElementById('form-admin-login').addEventListener('submit', (e) => {
                 e.preventDefault();
-                const pass = document.getElementById('admin-pass').value.trim();
-                const currentAdminPass = getSettings().adminPasscode || 'admin123';
-                
-                if (pass === currentAdminPass) {
+                const pass = document.getElementById('admin-pass').value;
+                if (pass === 'admin123' || pass === 'admin') {
                     localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'Mr. Appiah (HOD / Super Admin)', assignedClass: 'All Classes' }));
                     showToast('Super Admin Active', 'Welcome to the Assin Nsuta SHS ICT Control Panel.');
                     renderApp();
@@ -1218,7 +1203,7 @@
                         </div>
                     </div>
 
-                    <!-- TAB 2: NATIVE QUIZ BUILDER & UNIFIED GRADEBOOK (Native + Google Forms + GitHub HTML Apps) -->
+                    <!-- TAB 2: NATIVE QUIZ BUILDER & UNIFIED GRADEBOOK -->
                     <div id="atab-quizzes" class="space-y-6 hidden">
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                             <!-- Left Column: Native Quiz Builder -->
@@ -1537,7 +1522,7 @@
                                 <form id="form-add-announcement" class="space-y-3">
                                     <input type="text" id="ann-title" required placeholder="Announcement Headline..." class="w-full px-3 py-2 border rounded-lg text-sm">
                                     <textarea id="ann-content" required rows="2" placeholder="Details for students..." class="w-full px-3 py-2 border rounded-lg text-sm"></textarea>
-                                    <button type="submit" class="w-full py-2 bg-amber-50 text-white rounded-lg font-bold text-xs uppercase hover:bg-amber-600 transition">Post Notice & Sync</button>
+                                    <button type="submit" class="w-full py-2 bg-amber-500 text-white rounded-lg font-bold text-xs uppercase hover:bg-amber-600 transition">Post Notice & Sync</button>
                                 </form>
                             </div>
                             <div class="bg-white rounded-xl shadow-sm border border-slate-200 divide-y">
@@ -2440,19 +2425,11 @@
                     const departmentName = document.getElementById('brand-dept-name').value.trim();
                     const motto = document.getElementById('brand-motto').value.trim();
                     const cloudSyncUrl = document.getElementById('brand-cloud-url').value.trim();
-                    const currentSettings = getSettings();
 
                     if (cloudSyncUrl) {
                         localStorage.setItem(DB_KEYS.CLOUD_URL, cloudSyncUrl);
                     }
-                    const newSettings = { 
-                        schoolName, 
-                        departmentName, 
-                        motto, 
-                        logoUrl, 
-                        cloudSyncUrl, 
-                        adminPasscode: currentSettings.adminPasscode || 'admin123'
-                    };
+                    const newSettings = { schoolName, departmentName, motto, logoUrl, cloudSyncUrl };
                     saveTableAndSync('SETTINGS', newSettings);
                     showToast('Settings & Cloud URL Saved!', 'School branding and cloud configuration updated.');
                     renderApp('settings');
