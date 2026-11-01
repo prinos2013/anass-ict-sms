@@ -13,9 +13,9 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: '#1e3a8a',
-                        secondary: '#4f46e5',
-                        accent: '#059669',
+                        primary: '#1e3a8a', // Deep Academic Blue
+                        secondary: '#4f46e5', // Indigo
+                        accent: '#059669', // Emerald Green
                     }
                 }
             }
@@ -86,22 +86,23 @@
 
         // --- STORAGE & DATABASE KEYS ---
         const DB_KEYS = {
-            SETTINGS: 'anass_lms_settings_v9',
-            TEACHERS: 'anass_lms_teachers_v9',
-            STUDENTS: 'anass_lms_students_v9',
-            MATERIALS: 'anass_lms_materials_v9',
-            QUIZZES: 'anass_lms_quizzes_v9',
-            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v9',
-            PROGRESS: 'anass_lms_progress_v9',
-            ANNOUNCEMENTS: 'anass_lms_announcements_v9',
-            SUBMISSIONS: 'anass_lms_submissions_v9',
-            TIMETABLE: 'anass_lms_timetable_v9',
-            FAQS: 'anass_lms_faqs_v9',
-            CURRENT_USER: 'anass_lms_current_user_v9',
-            CLOUD_URL: 'anass_lms_cloud_url_v9',
-            PENDING_SYNC: 'anass_lms_pending_sync_v9'
+            SETTINGS: 'anass_lms_settings_v7',
+            TEACHERS: 'anass_lms_teachers_v7',
+            STUDENTS: 'anass_lms_students_v7',
+            MATERIALS: 'anass_lms_materials_v7',
+            QUIZZES: 'anass_lms_quizzes_v7',
+            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v7',
+            PROGRESS: 'anass_lms_progress_v7',
+            ANNOUNCEMENTS: 'anass_lms_announcements_v7',
+            SUBMISSIONS: 'anass_lms_submissions_v7',
+            TIMETABLE: 'anass_lms_timetable_v7',
+            FAQS: 'anass_lms_faqs_v7',
+            CURRENT_USER: 'anass_lms_current_user_v7',
+            CLOUD_URL: 'anass_lms_cloud_url_v7',
+            PENDING_SYNC: 'anass_lms_pending_sync_v7'
         };
 
+        // Map internal DB_KEYS to Google Sheet Tab Names
         const TABLE_KEY_MAP = {
             SETTINGS: DB_KEYS.SETTINGS,
             TEACHERS: DB_KEYS.TEACHERS,
@@ -116,6 +117,7 @@
             FAQS: DB_KEYS.FAQS
         };
 
+        // --- OFFICIAL 45 ASSIN NSUTA SHS CLASSES ---
         const ANASS_CLASSES = {
             'SHS 1': ['1AGRIC', '1ARTS 1', '1ARTS 2A', '1ARTS 2B', '1ARTS 3', '1ARTS 4', '1BUS', '1LANG', '1H/E 1A', '1H/E 1B', '1H/E 2A', '1H/E 2B', '1SCI', '1V/A 1', '1V/A 2'],
             'SHS 2': ['2AGRIC', '2ARTS 1', '2ARTS 2A', '2ARTS 2B', '2ARTS 3', '2ARTS 4', '2BUS', '2LANG', '2H/E 1A', '2H/E 1B', '2H/E 2A', '2H/E 2B', '2SCI', '2V/A 1', '2V/A 2'],
@@ -157,6 +159,7 @@
             }
         }
 
+        // Save table to localStorage AND push to Google Sheets Cloud
         async function saveTableAndSync(tableName, dataObj) {
             const storageKey = TABLE_KEY_MAP[tableName];
             if (!storageKey) return;
@@ -194,6 +197,7 @@
             }
         }
 
+        // Push ALL local tables to Google Sheets Cloud at once
         async function pushAllTablesToCloud(showNotification = true) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -226,6 +230,7 @@
             }
         }
 
+        // Pull latest records from Google Sheets Cloud into browser localStorage
         async function pullFromCloud(showNotification = false) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -247,6 +252,7 @@
                     Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                         const cloudVal = json.data[tableName];
                         if (cloudVal !== null && cloudVal !== undefined) {
+                            // Preserve cloudSyncUrl and adminPasscode if pulling SETTINGS
                             if (tableName === 'SETTINGS') {
                                 cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
                                 cloudVal.adminPasscode = cloudVal.adminPasscode || getSettings().adminPasscode || 'admin123';
@@ -256,6 +262,7 @@
                         }
                     });
 
+                    // Refresh active logged-in user session if their record updated
                     const curr = getCurrentUser();
                     if (curr && curr.role === 'student') {
                         const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
@@ -524,7 +531,7 @@
             return false;
         }
 
-        // --- MY PROFILE & SECURITY MODAL (Accessible to Admin, Teachers, and Students) ---
+        // --- MY PROFILE & SECURITY MODAL ---
         function openProfileSecurityModal() {
             const user = getCurrentUser();
             if (!user) return;
@@ -1749,7 +1756,7 @@
                 </div>
             `;
         }
-
+        
         function renderGradebookRowsHTML(attemptsList) {
             if (attemptsList.length === 0) {
                 return `<tr><td colspan="7" class="p-6 text-center text-slate-400 text-sm">No assessment records match the current filter.</td></tr>`;
