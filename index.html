@@ -86,23 +86,22 @@
 
         // --- STORAGE & DATABASE KEYS ---
         const DB_KEYS = {
-            SETTINGS: 'anass_lms_settings_v8',
-            TEACHERS: 'anass_lms_teachers_v8',
-            STUDENTS: 'anass_lms_students_v8',
-            MATERIALS: 'anass_lms_materials_v8',
-            QUIZZES: 'anass_lms_quizzes_v8',
-            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v8',
-            PROGRESS: 'anass_lms_progress_v8',
-            ANNOUNCEMENTS: 'anass_lms_announcements_v8',
-            SUBMISSIONS: 'anass_lms_submissions_v8',
-            TIMETABLE: 'anass_lms_timetable_v8',
-            FAQS: 'anass_lms_faqs_v8',
-            CURRENT_USER: 'anass_lms_current_user_v8',
-            CLOUD_URL: 'anass_lms_cloud_url_v8',
-            PENDING_SYNC: 'anass_lms_pending_sync_v8'
+            SETTINGS: 'anass_lms_settings_v9',
+            TEACHERS: 'anass_lms_teachers_v9',
+            STUDENTS: 'anass_lms_students_v9',
+            MATERIALS: 'anass_lms_materials_v9',
+            QUIZZES: 'anass_lms_quizzes_v9',
+            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v9',
+            PROGRESS: 'anass_lms_progress_v9',
+            ANNOUNCEMENTS: 'anass_lms_announcements_v9',
+            SUBMISSIONS: 'anass_lms_submissions_v9',
+            TIMETABLE: 'anass_lms_timetable_v9',
+            FAQS: 'anass_lms_faqs_v9',
+            CURRENT_USER: 'anass_lms_current_user_v9',
+            CLOUD_URL: 'anass_lms_cloud_url_v9',
+            PENDING_SYNC: 'anass_lms_pending_sync_v9'
         };
 
-        // Map internal DB_KEYS to Google Sheet Tab Names
         const TABLE_KEY_MAP = {
             SETTINGS: DB_KEYS.SETTINGS,
             TEACHERS: DB_KEYS.TEACHERS,
@@ -117,7 +116,6 @@
             FAQS: DB_KEYS.FAQS
         };
 
-        // --- OFFICIAL 45 ASSIN NSUTA SHS CLASSES ---
         const ANASS_CLASSES = {
             'SHS 1': ['1AGRIC', '1ARTS 1', '1ARTS 2A', '1ARTS 2B', '1ARTS 3', '1ARTS 4', '1BUS', '1LANG', '1H/E 1A', '1H/E 1B', '1H/E 2A', '1H/E 2B', '1SCI', '1V/A 1', '1V/A 2'],
             'SHS 2': ['2AGRIC', '2ARTS 1', '2ARTS 2A', '2ARTS 2B', '2ARTS 3', '2ARTS 4', '2BUS', '2LANG', '2H/E 1A', '2H/E 1B', '2H/E 2A', '2H/E 2B', '2SCI', '2V/A 1', '2V/A 2'],
@@ -159,7 +157,6 @@
             }
         }
 
-        // Save table to localStorage AND push to Google Sheets Cloud
         async function saveTableAndSync(tableName, dataObj) {
             const storageKey = TABLE_KEY_MAP[tableName];
             if (!storageKey) return;
@@ -197,7 +194,6 @@
             }
         }
 
-        // Push ALL local tables to Google Sheets Cloud at once
         async function pushAllTablesToCloud(showNotification = true) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -230,7 +226,6 @@
             }
         }
 
-        // Pull latest records from Google Sheets Cloud into browser localStorage
         async function pullFromCloud(showNotification = false) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -252,7 +247,6 @@
                     Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                         const cloudVal = json.data[tableName];
                         if (cloudVal !== null && cloudVal !== undefined) {
-                            // Preserve cloudSyncUrl and adminPasscode if pulling SETTINGS
                             if (tableName === 'SETTINGS') {
                                 cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
                                 cloudVal.adminPasscode = cloudVal.adminPasscode || getSettings().adminPasscode || 'admin123';
@@ -262,7 +256,6 @@
                         }
                     });
 
-                    // Refresh active logged-in user session if their record updated
                     const curr = getCurrentUser();
                     if (curr && curr.role === 'student') {
                         const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
@@ -503,7 +496,6 @@
             document.getElementById('custom-modal').classList.add('hidden');
         }
 
-        // Generate 45 Official Assin Nsuta SHS Class Options
         function generateClassOptions(selected = '', includeGroups = true) {
             let options = '';
             if (includeGroups) {
@@ -532,7 +524,7 @@
             return false;
         }
 
-        // --- MY PROFILE & SECURITY MODAL ---
+        // --- MY PROFILE & SECURITY MODAL (Accessible to Admin, Teachers, and Students) ---
         function openProfileSecurityModal() {
             const user = getCurrentUser();
             if (!user) return;
@@ -962,6 +954,7 @@
                 let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
                 let student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
 
+                // If not found locally and cloud URL is configured, fetch latest cloud roster first
                 if (!student && getCloudSyncUrl() && navigator.onLine) {
                     await pullFromCloud(false);
                     students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
@@ -1652,6 +1645,14 @@
                                                 Reset Crest
                                             </button>
                                         </div>
+                                        <div class="grid grid-cols-2 gap-2 pt-1">
+                                            <button type="button" onclick="pushAllTablesToCloud(true)" class="py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] uppercase transition">
+                                                <i class="fas fa-cloud-upload-alt mr-1"></i> Push All to Cloud
+                                            </button>
+                                            <button type="button" onclick="pullFromCloud(true)" class="py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-[11px] uppercase transition">
+                                                <i class="fas fa-cloud-download-alt mr-1"></i> Pull from Cloud
+                                            </button>
+                                        </div>
                                     </form>
                                 ` : `
                                     <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
@@ -1748,8 +1749,7 @@
                 </div>
             `;
         }
-        
-        // ... (all other functions remain identical: renderGradebookRowsHTML, etc.)
+
         function renderGradebookRowsHTML(attemptsList) {
             if (attemptsList.length === 0) {
                 return `<tr><td colspan="7" class="p-6 text-center text-slate-400 text-sm">No assessment records match the current filter.</td></tr>`;
