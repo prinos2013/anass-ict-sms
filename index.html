@@ -82,27 +82,26 @@
         // ====================================================================
         // PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL BELOW FOR GLOBAL SYNC:
         // ====================================================================
-        const DEFAULT_CLOUD_SYNC_URL = ""; 
+        const DEFAULT_CLOUD_SYNC_URL = "https://script.google.com/macros/s/AKfycbwpEmJDwE3t6Rwd7OpGXznrmf9xHhO_-huBegagdSKv-rjbsGzXPE5f4PjFj0lKwMmAVA/exec"; 
 
-        // --- STORAGE & DATABASE KEYS ---
+        // --- STORAGE & DATABASE KEYS (Upgraded to v10 to bypass blank screen cache errors) ---
         const DB_KEYS = {
-            SETTINGS: 'anass_lms_settings_v7',
-            TEACHERS: 'anass_lms_teachers_v7',
-            STUDENTS: 'anass_lms_students_v7',
-            MATERIALS: 'anass_lms_materials_v7',
-            QUIZZES: 'anass_lms_quizzes_v7',
-            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v7',
-            PROGRESS: 'anass_lms_progress_v7',
-            ANNOUNCEMENTS: 'anass_lms_announcements_v7',
-            SUBMISSIONS: 'anass_lms_submissions_v7',
-            TIMETABLE: 'anass_lms_timetable_v7',
-            FAQS: 'anass_lms_faqs_v7',
-            CURRENT_USER: 'anass_lms_current_user_v7',
-            CLOUD_URL: 'anass_lms_cloud_url_v7',
-            PENDING_SYNC: 'anass_lms_pending_sync_v7'
+            SETTINGS: 'anass_lms_settings_v10',
+            TEACHERS: 'anass_lms_teachers_v10',
+            STUDENTS: 'anass_lms_students_v10',
+            MATERIALS: 'anass_lms_materials_v10',
+            QUIZZES: 'anass_lms_quizzes_v10',
+            QUIZ_ATTEMPTS: 'anass_lms_quiz_attempts_v10',
+            PROGRESS: 'anass_lms_progress_v10',
+            ANNOUNCEMENTS: 'anass_lms_announcements_v10',
+            SUBMISSIONS: 'anass_lms_submissions_v10',
+            TIMETABLE: 'anass_lms_timetable_v10',
+            FAQS: 'anass_lms_faqs_v10',
+            CURRENT_USER: 'anass_lms_current_user_v10',
+            CLOUD_URL: 'anass_lms_cloud_url_v10',
+            PENDING_SYNC: 'anass_lms_pending_sync_v10'
         };
 
-        // Map internal DB_KEYS to Google Sheet Tab Names
         const TABLE_KEY_MAP = {
             SETTINGS: DB_KEYS.SETTINGS,
             TEACHERS: DB_KEYS.TEACHERS,
@@ -117,21 +116,29 @@
             FAQS: DB_KEYS.FAQS
         };
 
-        // --- OFFICIAL 45 ASSIN NSUTA SHS CLASSES ---
         const ANASS_CLASSES = {
             'SHS 1': ['1AGRIC', '1ARTS 1', '1ARTS 2A', '1ARTS 2B', '1ARTS 3', '1ARTS 4', '1BUS', '1LANG', '1H/E 1A', '1H/E 1B', '1H/E 2A', '1H/E 2B', '1SCI', '1V/A 1', '1V/A 2'],
             'SHS 2': ['2AGRIC', '2ARTS 1', '2ARTS 2A', '2ARTS 2B', '2ARTS 3', '2ARTS 4', '2BUS', '2LANG', '2H/E 1A', '2H/E 1B', '2H/E 2A', '2H/E 2B', '2SCI', '2V/A 1', '2V/A 2'],
             'SHS 3': ['3AGRIC', '3ARTS 1', '3ARTS 2A', '3ARTS 2B', '3ARTS 3', '3ARTS 4', '3BUS', '3LANG', '3H/E 1A', '3H/E 1B', '3H/E 2A', '3H/E 2B', '3SCI', '3V/A 1', '3V/A 2']
         };
 
-        let activeQuizState = {
-            quiz: null,
-            answers: {},
-            timerInterval: null,
-            secondsRemaining: 0
-        };
-
+        let activeQuizState = { quiz: null, answers: {}, timerInterval: null, secondsRemaining: 0 };
         let builderQuestions = [];
+
+        // --- SAFE DATA RETRIEVAL LOGIC (Prevents Blank Screens) ---
+        function safeGetList(key) {
+            try {
+                const data = JSON.parse(localStorage.getItem(key));
+                return Array.isArray(data) ? data : [];
+            } catch (e) { return []; }
+        }
+
+        function safeGetObj(key) {
+            try {
+                const data = JSON.parse(localStorage.getItem(key));
+                return (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+            } catch (e) { return {}; }
+        }
 
         // --- TWO-WAY GOOGLE SHEETS CLOUD SYNC ENGINE ---
         function getCloudSyncUrl() {
@@ -159,7 +166,6 @@
             }
         }
 
-        // Save table to localStorage AND push to Google Sheets Cloud
         async function saveTableAndSync(tableName, dataObj) {
             const storageKey = TABLE_KEY_MAP[tableName];
             if (!storageKey) return;
@@ -183,11 +189,7 @@
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: 'SYNC_TABLE',
-                        table: tableName,
-                        records: dataObj
-                    })
+                    body: JSON.stringify({ action: 'SYNC_TABLE', table: tableName, records: dataObj })
                 });
                 localStorage.removeItem(DB_KEYS.PENDING_SYNC);
                 setCloudBadgeStatus('synced', 'Cloud Synced');
@@ -197,7 +199,6 @@
             }
         }
 
-        // Push ALL local tables to Google Sheets Cloud at once
         async function pushAllTablesToCloud(showNotification = true) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -216,10 +217,7 @@
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: 'SYNC_ALL',
-                        data: payloadData
-                    })
+                    body: JSON.stringify({ action: 'SYNC_ALL', data: payloadData })
                 });
                 localStorage.removeItem(DB_KEYS.PENDING_SYNC);
                 setCloudBadgeStatus('synced', 'All Data Pushed');
@@ -230,7 +228,6 @@
             }
         }
 
-        // Pull latest records from Google Sheets Cloud into browser localStorage
         async function pullFromCloud(showNotification = false) {
             const url = getCloudSyncUrl();
             if (!url) {
@@ -252,7 +249,6 @@
                     Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                         const cloudVal = json.data[tableName];
                         if (cloudVal !== null && cloudVal !== undefined) {
-                            // Preserve cloudSyncUrl and adminPasscode if pulling SETTINGS
                             if (tableName === 'SETTINGS') {
                                 cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
                                 cloudVal.adminPasscode = cloudVal.adminPasscode || getSettings().adminPasscode || 'admin123';
@@ -262,23 +258,20 @@
                         }
                     });
 
-                    // Refresh active logged-in user session if their record updated
                     const curr = getCurrentUser();
                     if (curr && curr.role === 'student') {
-                        const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                        const stuList = safeGetList(DB_KEYS.STUDENTS);
                         const freshStu = stuList.find(s => s.id === curr.id);
                         if (freshStu) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'student', ...freshStu }));
                     } else if (curr && curr.role === 'teacher') {
-                        const tchList = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                        const tchList = safeGetList(DB_KEYS.TEACHERS);
                         const freshTch = tchList.find(t => t.id === curr.id);
                         if (freshTch) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'teacher', ...freshTch }));
                     }
 
                     setCloudBadgeStatus('synced', 'Cloud Synced');
                     if (showNotification) showToast('Cloud Synced!', 'Latest updates from teachers and students loaded.');
-                    if (updatedAny && !activeQuizState.timerInterval) {
-                        renderApp();
-                    }
+                    if (updatedAny && !activeQuizState.timerInterval) renderApp();
                     return true;
                 }
             } catch (err) {
@@ -291,169 +284,60 @@
         // --- INITIALIZE SAMPLE DATA ---
         function initDatabase() {
             if (!localStorage.getItem(DB_KEYS.SETTINGS)) {
-                const defaultSettings = {
-                    schoolName: 'Assin Nsuta SHS',
-                    departmentName: 'ICT Department LMS & Portal',
-                    motto: 'Excellence Through Technology & Discipline',
-                    logoUrl: '',
-                    cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL,
-                    adminPasscode: 'admin123'
-                };
-                localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(defaultSettings));
+                localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify({ schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology & Discipline', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL, adminPasscode: 'admin123' }));
             }
-
             if (!localStorage.getItem(DB_KEYS.TEACHERS)) {
-                const sampleTeachers = [
+                localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify([
                     { id: 'STF-101', name: 'Madam Akosua Owusu', username: 'akosua.staff', passcode: '1234', assignedClass: 'All SHS 1', subjectRole: 'Programming & Web Design' },
                     { id: 'STF-102', name: 'Mr. Emmanuel Mensah', username: 'mensah.staff', passcode: '1234', assignedClass: 'All SHS 2', subjectRole: 'Networking & Hardware' },
                     { id: 'STF-103', name: 'Mr. Isaac Boateng', username: 'boateng.staff', passcode: '1234', assignedClass: 'All SHS 3', subjectRole: 'Database Systems & WASSCE Prep' }
-                ];
-                localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify(sampleTeachers));
+                ]));
             }
-
             if (!localStorage.getItem(DB_KEYS.STUDENTS)) {
-                const sampleStudents = [
+                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify([
                     { id: 'ANASS-1001', name: 'Kwame Mensah', username: 'kwame', passcode: '1234', classGroup: '1SCI' },
                     { id: 'ANASS-1002', name: 'Abena Ofori', username: 'abena', passcode: '1234', classGroup: '1ARTS 1' },
                     { id: 'ANASS-2001', name: 'Kofi Boateng', username: 'kofi', passcode: '1234', classGroup: '2BUS' },
                     { id: 'ANASS-3001', name: 'Akosua Serwaa', username: 'akosua', passcode: '1234', classGroup: '3H/E 1A' }
-                ];
-                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(sampleStudents));
+                ]));
             }
-
             if (!localStorage.getItem(DB_KEYS.MATERIALS)) {
-                const sampleMaterials = [
+                localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify([
                     { id: 'MAT-1', title: 'Introduction to Computer Hardware & Peripherals', category: 'PDF', classGroup: 'All Classes', url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', date: '2026-03-01', description: 'Comprehensive PDF guide covering input, output, processing, and storage devices with diagrams.', isGradable: false, maxScore: 0, author: 'Mr. Appiah (HOD)' },
-                    { id: 'MAT-2', title: 'Python Programming Fundamentals (Variables & Loops)', category: 'Video', classGroup: 'All SHS 1', url: 'https://www.youtube.com/watch?v=rfscVS0vtbw', date: '2026-03-02', description: 'Video lecture introducing Python syntax, variables, loops, and basic Tkinter GUI concepts.', isGradable: false, maxScore: 0, author: 'Madam Akosua Owusu' },
-                    { id: 'MAT-3', title: 'Networking Topologies & OSI Model Audio Summary', category: 'Audio', classGroup: 'All Classes', url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg', date: '2026-03-03', description: 'Quick revision audio guide explaining Star, Bus, Ring, and Mesh network topologies.', isGradable: false, maxScore: 0, author: 'Mr. Emmanuel Mensah' },
-                    { id: 'MAT-4', title: 'Database Management & SQL Practice Notes (.docx)', category: 'Word', classGroup: 'All SHS 2', url: 'https://docs.google.com/document/create', date: '2026-03-04', description: 'Downloadable Microsoft Word worksheet on Relational Databases, Primary Keys, and SQL Queries.', isGradable: false, maxScore: 0, author: 'Mr. Isaac Boateng' },
-                    { id: 'MAT-5', title: 'Google Forms Mid-Term ICT Theory Assessment', category: 'Google Form', classGroup: 'All Classes', url: 'https://docs.google.com/forms', date: '2026-03-05', description: 'Complete this external Google Form quiz and submit your score or verification code to the Gradebook.', isGradable: true, maxScore: 20, author: 'Mr. Appiah (HOD)' },
-                    { id: 'MAT-6', title: 'GitHub Interactive HTML5 & Logic Gate Simulator Test', category: 'GitHub HTML App', classGroup: 'All Classes', url: 'https://developer.mozilla.org/en-US/docs/Web/HTML', date: '2026-03-06', description: 'Complete the interactive HTML5 exercise hosted on GitHub Pages and log your final score.', isGradable: true, maxScore: 50, author: 'Madam Akosua Owusu' }
-                ];
-                localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify(sampleMaterials));
+                    { id: 'MAT-5', title: 'Google Forms Mid-Term ICT Theory Assessment', category: 'Google Form', classGroup: 'All Classes', url: 'https://docs.google.com/forms', date: '2026-03-05', description: 'Complete this external Google Form quiz and submit your score or verification code to the Gradebook.', isGradable: true, maxScore: 20, author: 'Mr. Appiah (HOD)' }
+                ]));
             }
-
             if (!localStorage.getItem(DB_KEYS.QUIZZES)) {
-                const sampleQuizzes = [
-                    {
-                        id: 'QUIZ-101',
-                        title: 'Core ICT & Computing Fundamentals Quiz 1',
-                        classGroup: 'All Classes',
-                        timeLimit: 10,
-                        date: '2026-03-05',
-                        author: 'Mr. Appiah (HOD)',
-                        questions: [
-                            {
-                                q: 'Which component of the computer is primarily responsible for executing arithmetic and logical operations?',
-                                options: ['Random Access Memory (RAM)', 'Arithmetic Logic Unit (ALU)', 'Hard Disk Drive (HDD)', 'Power Supply Unit (PSU)'],
-                                correct: 1
-                            },
-                            {
-                                q: 'Which of the following is an example of system software?',
-                                options: ['Microsoft Word', 'Ubuntu Linux Operating System', 'Adobe Photoshop', 'Google Chrome Browser'],
-                                correct: 1
-                            },
-                            {
-                                q: 'In HTML5, which tag is used to create a hyperlink to another webpage or resource?',
-                                options: ['<link>', '<a>', '<href>', '<url>'],
-                                correct: 1
-                            },
-                            {
-                                q: 'What does LAN stand for in computer networking?',
-                                options: ['Large Access Network', 'Local Area Network', 'Logical Array Node', 'Link Access Number'],
-                                correct: 1
-                            },
-                            {
-                                q: 'In Python, which keyword is used to define a function?',
-                                options: ['func', 'define', 'def', 'function'],
-                                correct: 2
-                            }
-                        ]
-                    },
-                    {
-                        id: 'QUIZ-102',
-                        title: 'SHS 1 Hardware & Binary Number System Test',
-                        classGroup: 'All SHS 1',
-                        timeLimit: 8,
-                        date: '2026-03-06',
-                        author: 'Madam Akosua Owusu',
-                        questions: [
-                            {
-                                q: 'Convert the binary number 1010 into decimal (base 10).',
-                                options: ['8', '10', '12', '14'],
-                                correct: 1
-                            },
-                            {
-                                q: 'Which memory type is volatile and loses its contents when power is turned off?',
-                                options: ['ROM', 'RAM', 'SSD', 'Flash Drive'],
-                                correct: 1
-                            },
-                            {
-                                q: 'Which device is strictly an INPUT device?',
-                                options: ['Plotter', 'Optical Barcode Scanner', 'Projector', 'Speaker'],
-                                correct: 1
-                            }
-                        ]
-                    }
-                ];
-                localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify(sampleQuizzes));
+                localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify([
+                    { id: 'QUIZ-101', title: 'Core ICT & Computing Fundamentals Quiz 1', classGroup: 'All Classes', timeLimit: 10, date: '2026-03-05', author: 'Mr. Appiah (HOD)', questions: [
+                        { q: 'Which component of the computer executes arithmetic operations?', options: ['RAM', 'ALU', 'HDD', 'PSU'], correct: 1 },
+                        { q: 'In Python, which keyword is used to define a function?', options: ['func', 'define', 'def', 'function'], correct: 2 }
+                    ]}
+                ]));
             }
-
-            if (!localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS)) {
-                const sampleAttempts = [
-                    { id: 'ATT-1', quizId: 'QUIZ-101', quizTitle: 'Core ICT & Computing Fundamentals Quiz 1', assessmentType: 'Native LMS Quiz', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', score: 4, total: 5, percentage: 80, status: 'Auto-Graded', verificationNote: 'Built-in Quiz Runner', recordedBy: 'System', date: '2026-03-05 14:20' },
-                    { id: 'ATT-2', quizId: 'MAT-5', quizTitle: 'Google Forms Mid-Term ICT Theory Assessment', assessmentType: 'Google Form', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', score: 18, total: 20, percentage: 90, status: 'Verified', verificationNote: 'Google Form Response #GF-882', recordedBy: 'Madam Akosua Owusu', date: '2026-03-06 09:15' },
-                    { id: 'ATT-3', quizId: 'MAT-6', quizTitle: 'GitHub Interactive HTML5 & Logic Gate Simulator Test', assessmentType: 'GitHub HTML App', studentId: 'ANASS-2001', studentName: 'Kofi Boateng', classGroup: '2BUS', score: 44, total: 50, percentage: 88, status: 'Pending Verification', verificationNote: 'Completed GitHub quiz, verification code: GH-4450', recordedBy: 'Student Claim', date: '2026-03-06 11:40' }
-                ];
-                localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify(sampleAttempts));
-            }
-
-            if (!localStorage.getItem(DB_KEYS.PROGRESS)) {
-                const sampleProgress = {
-                    'ANASS-1001': ['MAT-1', 'MAT-2', 'MAT-5']
-                };
-                localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify(sampleProgress));
-            }
-
-            if (!localStorage.getItem(DB_KEYS.ANNOUNCEMENTS)) {
-                const sampleAnnouncements = [
-                    { id: 'ANN-1', title: 'SHS 1 - 3 Practical & External Assessment Week', content: 'All classes are reminded to complete both their Native LMS Quizzes and their assigned Google Form / GitHub HTML assessments before Friday.', date: '2026-03-04', author: 'Mr. Appiah (HOD)' },
-                    { id: 'ANN-2', title: 'ICT Coding & Robotics Club Meeting', content: 'Students working on Python/Tkinter and HTML5 projects should submit their GitHub repository or Google Drive links via the Project Showcase tab.', date: '2026-03-02', author: 'Madam Akosua Owusu' }
-                ];
-                localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify(sampleAnnouncements));
-            }
-
-            if (!localStorage.getItem(DB_KEYS.SUBMISSIONS)) {
-                const sampleSubmissions = [
-                    { id: 'SUB-1', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', projectTitle: 'Student Attendance Calculator (Python/Tkinter)', projectUrl: 'https://github.com/kwame-anass/attendance-calculator', status: 'Graded (92% - Excellent UI)', date: '2026-03-04' },
-                    { id: 'SUB-2', studentId: 'ANASS-2001', studentName: 'Kofi Boateng', classGroup: '2BUS', projectTitle: 'Assin Nsuta School Club Webpage (HTML/CSS)', projectUrl: 'https://github.com/kofi-anass/club-site', status: 'Pending Review', date: '2026-03-05' }
-                ];
-                localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify(sampleSubmissions));
-            }
-
-            if (!localStorage.getItem(DB_KEYS.TIMETABLE)) {
-                const sampleTimetable = [
-                    { id: 'TT-1', classGroup: '1SCI', day: 'Monday', time: '08:00 AM - 10:00 AM', lab: 'ICT Lab 1 (Main)', instructor: 'Mr. Appiah (HOD)' },
-                    { id: 'TT-2', classGroup: '2BUS', day: 'Wednesday', time: '10:30 AM - 12:30 PM', lab: 'ICT Lab 2', instructor: 'Madam Akosua Owusu' },
-                    { id: 'TT-3', classGroup: '3H/E 1A', day: 'Friday', time: '01:00 PM - 03:00 PM', lab: 'Hardware & Networking Lab', instructor: 'Mr. Emmanuel Mensah' }
-                ];
-                localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify(sampleTimetable));
-            }
-
+            if (!localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS)) { localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify([])); }
+            if (!localStorage.getItem(DB_KEYS.PROGRESS)) { localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify({})); }
+            if (!localStorage.getItem(DB_KEYS.ANNOUNCEMENTS)) { localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify([])); }
+            if (!localStorage.getItem(DB_KEYS.SUBMISSIONS)) { localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify([])); }
+            if (!localStorage.getItem(DB_KEYS.TIMETABLE)) { localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify([])); }
             if (!localStorage.getItem(DB_KEYS.FAQS)) {
-                const sampleFaqs = [
-                    { id: 'FAQ-1', question: 'How do I change my login passcode?', answer: 'Click the "My Profile & Security" button in the top navigation bar. Your Student ID and Username are fixed by the ICT Department, but you can update your passcode at any time and it will sync across devices.' },
-                    { id: 'FAQ-2', question: 'How do I submit scores for external Google Forms or GitHub HTML tests?', answer: 'Open the external link from your Learning Hub or Assessments tab. Once completed, click "Submit Score Claim" on the card to send your score and verification note directly to the Unified Gradebook.' },
-                    { id: 'FAQ-3', question: 'How do I take a built-in ICT Quiz and get my score?', answer: 'Navigate to the "Quizzes & My Gradebook" tab in your Student Portal, click "Start Interactive Quiz Now", answer the multiple-choice questions before the countdown timer ends, and click Submit for instant auto-grading.' }
-                ];
-                localStorage.setItem(DB_KEYS.FAQS, JSON.stringify(sampleFaqs));
+                localStorage.setItem(DB_KEYS.FAQS, JSON.stringify([
+                    { id: 'FAQ-1', question: 'How do I change my login passcode?', answer: 'Click the "My Profile & Security" button in the top navigation bar.' },
+                    { id: 'FAQ-2', question: 'How do I submit scores for external Google Forms or GitHub HTML tests?', answer: 'Open the link from your Learning Hub. Once completed, click "Submit Score Claim" to log it to the Gradebook.' }
+                ]));
             }
         }
 
-        // --- BRANDING & LOGO HELPERS ---
         function getSettings() {
-            const raw = localStorage.getItem(DB_KEYS.SETTINGS);
-            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL, adminPasscode: 'admin123' };
+            const s = safeGetObj(DB_KEYS.SETTINGS);
+            return {
+                schoolName: s.schoolName || 'Assin Nsuta SHS',
+                departmentName: s.departmentName || 'ICT Department LMS & Portal',
+                motto: s.motto || 'Excellence Through Technology',
+                logoUrl: s.logoUrl || '',
+                cloudSyncUrl: s.cloudSyncUrl || DEFAULT_CLOUD_SYNC_URL,
+                adminPasscode: s.adminPasscode || 'admin123'
+            };
         }
 
         function renderSchoolLogoHTML(sizeClasses = 'w-12 h-12', iconTextSize = 'text-xl') {
@@ -469,22 +353,16 @@
             `;
         }
 
-        // --- HELPER UTILITIES ---
-        function genId(prefix = 'ID') {
-            return prefix + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
-        }
+        function genId(prefix = 'ID') { return prefix + '-' + Math.random().toString(36).substr(2, 6).toUpperCase(); }
 
         function showToast(title, msg, isError = false) {
             const toast = document.getElementById('toast');
             const icon = document.getElementById('toast-icon');
             document.getElementById('toast-title').innerText = title;
             document.getElementById('toast-msg').innerText = msg;
-            
             icon.className = isError ? "fas fa-exclamation-circle text-red-600 text-xl" : "fas fa-check-circle text-emerald-600 text-xl";
             toast.classList.remove('translate-x-full');
-            setTimeout(() => {
-                toast.classList.add('translate-x-full');
-            }, 3500);
+            setTimeout(() => { toast.classList.add('translate-x-full'); }, 3500);
         }
 
         function openModal(title, bodyHTML, footerHTML = null) {
@@ -499,9 +377,7 @@
             document.getElementById('custom-modal').classList.remove('hidden');
         }
 
-        function closeModal() {
-            document.getElementById('custom-modal').classList.add('hidden');
-        }
+        function closeModal() { document.getElementById('custom-modal').classList.add('hidden'); }
 
         function generateClassOptions(selected = '', includeGroups = true) {
             let options = '';
@@ -618,19 +494,17 @@
                 showToast('Missing Fields', 'Please fill in all passcode fields.', true);
                 return;
             }
-
             if (newPass.length < 4) {
                 showToast('Passcode Too Short', 'New passcode must be at least 4 characters.', true);
                 return;
             }
-
             if (newPass !== confPass) {
                 showToast('Mismatch', 'New passcode and confirmation do not match.', true);
                 return;
             }
 
             if (user.role === 'student') {
-                const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                const students = safeGetList(DB_KEYS.STUDENTS);
                 const stu = students.find(s => s.id === user.id);
                 if (!stu || stu.passcode !== currPass) {
                     showToast('Incorrect Passcode', 'Your current passcode is incorrect.', true);
@@ -643,7 +517,7 @@
                 closeModal();
                 showToast('Passcode Updated & Synced!', 'Your new student login passcode has been saved to the cloud.');
             } else if (user.role === 'teacher') {
-                const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                const teachers = safeGetList(DB_KEYS.TEACHERS);
                 const tch = teachers.find(t => t.id === user.id);
                 if (!tch || tch.passcode !== currPass) {
                     showToast('Incorrect Passcode', 'Your current staff passcode is incorrect.', true);
@@ -670,7 +544,7 @@
         }
 
         function openResetStudentPasscodeModal(stuId) {
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+            const students = safeGetList(DB_KEYS.STUDENTS);
             const s = students.find(item => item.id === stuId);
             if (!s) return;
 
@@ -709,7 +583,7 @@
                 showToast('Invalid Passcode', 'Passcode cannot be empty.', true);
                 return;
             }
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+            const students = safeGetList(DB_KEYS.STUDENTS);
             const s = students.find(item => item.id === stuId);
             if (s) {
                 s.classGroup = newClass;
@@ -722,47 +596,37 @@
         }
 
         function getStudentProgressStats(studentId, studentClass) {
-            const materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
-            const progressMap = JSON.parse(localStorage.getItem(DB_KEYS.PROGRESS) || '{}');
+            const materials = safeGetList(DB_KEYS.MATERIALS);
+            const progressMap = safeGetObj(DB_KEYS.PROGRESS);
             const completedIds = progressMap[studentId] || [];
-
             const assignedMaterials = materials.filter(m => isAssignedToStudent(m.classGroup, studentClass));
             const totalAssigned = assignedMaterials.length;
             if (totalAssigned === 0) return { completed: 0, total: 0, percentage: 100 };
-
             const completedCount = assignedMaterials.filter(m => completedIds.includes(m.id)).length;
             const percentage = Math.round((completedCount / totalAssigned) * 100);
             return { completed: completedCount, total: totalAssigned, percentage };
         }
 
         function getStudentQuizAverage(studentId) {
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]').filter(a => a.studentId === studentId);
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS).filter(a => a.studentId === studentId);
             if (attempts.length === 0) return { count: 0, avg: null };
             const sum = attempts.reduce((acc, curr) => acc + curr.percentage, 0);
             return { count: attempts.length, avg: Math.round(sum / attempts.length) };
         }
 
         function getAllGradableAssessments() {
-            const quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]').map(q => ({
-                id: q.id,
-                title: q.title,
-                type: 'Native LMS Quiz',
-                maxScore: q.questions.length,
-                classGroup: q.classGroup
+            const quizzes = safeGetList(DB_KEYS.QUIZZES).map(q => ({
+                id: q.id, title: q.title, type: 'Native LMS Quiz', maxScore: q.questions.length, classGroup: q.classGroup
             }));
-            const extMats = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]')
+            const extMats = safeGetList(DB_KEYS.MATERIALS)
                 .filter(m => m.isGradable || m.category === 'Google Form' || m.category === 'GitHub HTML App' || m.category === 'External Task')
                 .map(m => ({
-                    id: m.id,
-                    title: m.title,
-                    type: m.category === 'External Task' ? 'Google Form / External' : m.category,
-                    maxScore: parseInt(m.maxScore, 10) || 20,
-                    classGroup: m.classGroup
+                    id: m.id, title: m.title, type: m.category === 'External Task' ? 'Google Form / External' : m.category,
+                    maxScore: parseInt(m.maxScore, 10) || 20, classGroup: m.classGroup
                 }));
             return [...quizzes, ...extMats];
         }
 
-        // --- NETWORK STATUS & AUTO-FLUSH OFFLINE QUEUE ---
         function updateNetworkStatus() {
             const badge = document.getElementById('network-badge');
             if (!badge) return;
@@ -782,7 +646,7 @@
 
         function getCurrentUser() {
             const userStr = localStorage.getItem(DB_KEYS.CURRENT_USER);
-            return userStr ? JSON.parse(userStr) : null;
+            try { return userStr ? JSON.parse(userStr) : null; } catch (e) { return null; }
         }
 
         function renderApp(activeTabOverride = null) {
@@ -804,7 +668,6 @@
             updateNetworkStatus();
         }
 
-        // --- 1. LOGIN VIEW ---
         function getLoginViewHTML() {
             const s = getSettings();
             const hasCloud = Boolean(getCloudSyncUrl());
@@ -866,35 +729,6 @@
                             </div>
                             <button type="submit" class="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm hover:bg-blue-900 transition shadow-md">Access Super Admin Control Suite</button>
                         </form>
-
-                        <!-- Unified Instant Demo Logins -->
-                        <div class="mt-5 pt-4 border-t border-slate-100">
-                            <p class="text-[10px] font-bold text-slate-400 uppercase text-center mb-2">Instant One-Click Demo Logins (All Roles)</p>
-                            <div class="grid grid-cols-2 gap-1.5 mb-1.5">
-                                <button type="button" onclick="quickAdminLogin()" class="p-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-primary"><i class="fas fa-user-shield mr-1"></i>Super Admin</div>
-                                    <div class="text-[10px] text-slate-500">HOD Control & Logo</div>
-                                </button>
-                                <button type="button" onclick="quickTeacherLogin('akosua.staff', '1234')" class="p-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-emerald-800"><i class="fas fa-chalkboard-teacher mr-1"></i>Sample Teacher</div>
-                                    <div class="text-[10px] text-slate-500">Madam Akosua (Staff)</div>
-                                </button>
-                            </div>
-                            <div class="grid grid-cols-3 gap-1.5">
-                                <button type="button" onclick="quickDemoLogin('kwame', null)" class="p-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-indigo-700">Kwame</div>
-                                    <div class="text-[10px] text-slate-500">1SCI</div>
-                                </button>
-                                <button type="button" onclick="quickDemoLogin('kofi', null)" class="p-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-indigo-700">Kofi</div>
-                                    <div class="text-[10px] text-slate-500">2BUS</div>
-                                </button>
-                                <button type="button" onclick="quickDemoLogin('akosua', null)" class="p-1.5 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-indigo-700">Akosua</div>
-                                    <div class="text-[10px] text-slate-500">3H/E 1A</div>
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             `;
@@ -928,43 +762,18 @@
             }
         }
 
-        function quickDemoLogin(username, passcode) {
-            switchLoginTab('student');
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-            const stu = students.find(s => s.username.toLowerCase() === username.toLowerCase());
-            document.getElementById('stu-username').value = username;
-            document.getElementById('stu-passcode').value = stu ? stu.passcode : (passcode || '1234');
-            document.getElementById('form-student-login').dispatchEvent(new Event('submit'));
-        }
-
-        function quickTeacherLogin(username, passcode) {
-            switchLoginTab('teacher');
-            const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-            const tch = teachers.find(t => t.username.toLowerCase() === username.toLowerCase());
-            document.getElementById('tch-username').value = username;
-            document.getElementById('tch-passcode').value = tch ? tch.passcode : (passcode || '1234');
-            document.getElementById('form-teacher-login').dispatchEvent(new Event('submit'));
-        }
-
-        function quickAdminLogin() {
-            switchLoginTab('admin');
-            document.getElementById('admin-pass').value = getSettings().adminPasscode || 'admin123';
-            document.getElementById('form-admin-login').dispatchEvent(new Event('submit'));
-        }
-
         function attachLoginListeners() {
             document.getElementById('form-student-login').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const inputUser = document.getElementById('stu-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('stu-passcode').value.trim();
 
-                let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                let students = safeGetList(DB_KEYS.STUDENTS);
                 let student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
 
-                // If not found locally and cloud URL is configured, fetch latest cloud roster first
                 if (!student && getCloudSyncUrl() && navigator.onLine) {
                     await pullFromCloud(false);
-                    students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                    students = safeGetList(DB_KEYS.STUDENTS);
                     student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
                 }
 
@@ -982,12 +791,12 @@
                 const inputUser = document.getElementById('tch-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('tch-passcode').value.trim();
 
-                let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                let teachers = safeGetList(DB_KEYS.TEACHERS);
                 let teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
 
                 if (!teacher && getCloudSyncUrl() && navigator.onLine) {
                     await pullFromCloud(false);
-                    teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                    teachers = safeGetList(DB_KEYS.TEACHERS);
                     teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
                 }
 
@@ -1015,23 +824,21 @@
             });
         }
 
-
-        // --- 2. ADMIN & TEACHER STAFF DASHBOARD VIEW ---
+        // --- 2. ADMIN & TEACHER DASHBOARD VIEW ---
         function getAdminDashboardHTML(user) {
             const isSuperAdmin = user.role === 'admin';
             const s = getSettings();
-            const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-            const materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
-            const quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]');
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
-            const announcements = JSON.parse(localStorage.getItem(DB_KEYS.ANNOUNCEMENTS) || '[]');
-            const submissions = JSON.parse(localStorage.getItem(DB_KEYS.SUBMISSIONS) || '[]');
-            const timetable = JSON.parse(localStorage.getItem(DB_KEYS.TIMETABLE) || '[]');
+            const teachers = safeGetList(DB_KEYS.TEACHERS);
+            const students = safeGetList(DB_KEYS.STUDENTS);
+            const materials = safeGetList(DB_KEYS.MATERIALS);
+            const quizzes = safeGetList(DB_KEYS.QUIZZES);
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
+            const announcements = safeGetList(DB_KEYS.ANNOUNCEMENTS);
+            const submissions = safeGetList(DB_KEYS.SUBMISSIONS);
+            const timetable = safeGetList(DB_KEYS.TIMETABLE);
             const gradableItems = getAllGradableAssessments();
 
             return `
-                <!-- Admin / Teacher Top Header -->
                 <div class="${isSuperAdmin ? 'bg-primary' : 'bg-emerald-900'} text-white shadow-md">
                     <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-3">
                         <div class="flex items-center space-x-3.5">
@@ -1072,7 +879,6 @@
                 </div>
 
                 <div class="max-w-7xl mx-auto px-4 py-6 flex-grow w-full space-y-6">
-                    <!-- Overview Analytics Cards -->
                     <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
                         <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 border-l-4 border-l-indigo-600">
                             <p class="text-[10px] font-bold text-slate-500 uppercase">Students</p>
@@ -1106,7 +912,6 @@
                         </div>
                     </div>
 
-                    <!-- ADMIN & TEACHER NAVIGATION TABS -->
                     <div class="bg-white rounded-xl shadow-sm border border-slate-200 px-4 flex space-x-5 overflow-x-auto">
                         <button onclick="switchAdminTab('students')" id="atab-students-btn" class="py-3.5 font-bold text-xs uppercase tracking-wider border-b-2 border-indigo-600 text-indigo-600 whitespace-nowrap flex items-center space-x-1.5">
                             <i class="fas fa-users"></i><span>1. Students (${students.length})</span>
@@ -1128,10 +933,8 @@
                         </button>
                     </div>
 
-                    <!-- TAB 1: STUDENT ROSTER, CREDENTIALS & PROGRESS TRACKING -->
                     <div id="atab-students" class="space-y-6">
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <!-- Individual Student Credential Generator -->
                             <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <h3 class="text-base font-bold text-slate-900 mb-4 flex items-center space-x-2">
                                     <i class="fas fa-key text-indigo-600"></i>
@@ -1164,7 +967,6 @@
                                 </form>
                             </div>
 
-                            <!-- Bulk Student Generator -->
                             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
                                 <div>
                                     <h3 class="text-base font-bold text-slate-900 mb-2 flex items-center space-x-2">
@@ -1183,7 +985,6 @@
                             </div>
                         </div>
 
-                        <!-- Student Directory & LMS Progress Table -->
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                             <div class="p-4 bg-slate-50 border-b flex flex-col sm:flex-row justify-between items-center gap-3">
                                 <h4 class="font-bold text-sm text-slate-800">Student Credentials, Course Completion & Unified Gradebook Avg</h4>
@@ -1222,7 +1023,6 @@
                     <!-- TAB 2: NATIVE QUIZ BUILDER & UNIFIED GRADEBOOK -->
                     <div id="atab-quizzes" class="space-y-6 hidden">
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                            <!-- Left Column: Native Quiz Builder -->
                             <div class="lg:col-span-7 bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                                 <div class="flex justify-between items-center border-b pb-3">
                                     <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
@@ -1249,9 +1049,8 @@
                                     </div>
                                 </div>
 
-                                <!-- Add Question Sub-Form -->
                                 <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                                    <h4 class="text-xs font-bold text-indigo-900 uppercase">Add Question to Current Quiz (<span id="builder-q-count">${builderQuestions.length}</span> Added)</h4>
+                                    <h4 class="text-xs font-bold text-indigo-900 uppercase">Add Question (<span id="builder-q-count">${builderQuestions.length}</span> Added)</h4>
                                     <input type="text" id="b-question" placeholder="Enter question prompt here..." class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         <input type="text" id="b-opt0" placeholder="Option A" class="px-3 py-1.5 border rounded-lg text-xs bg-white">
@@ -1270,12 +1069,11 @@
                                             </select>
                                         </div>
                                         <button type="button" onclick="addQuestionToBuilder()" class="w-full sm:w-auto px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition">
-                                            <i class="fas fa-plus mr-1"></i> Add Question to Draft
+                                            <i class="fas fa-plus mr-1"></i> Add Question
                                         </button>
                                     </div>
                                 </div>
 
-                                <!-- Draft Questions Preview -->
                                 <div id="builder-questions-list" class="space-y-2 max-h-44 overflow-y-auto">
                                     ${renderBuilderQuestionsPreview()}
                                 </div>
@@ -1285,19 +1083,17 @@
                                 </button>
                             </div>
 
-                            <!-- Right Column: Record External Assessment Score -->
                             <div class="lg:col-span-5 space-y-6">
                                 <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                                     <div class="flex justify-between items-center border-b pb-3">
                                         <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
                                             <i class="fas fa-external-link-square-alt text-emerald-600"></i>
-                                            <span>Log External Score (Google Form / GitHub)</span>
+                                            <span>Log External Score (Google Form)</span>
                                         </h3>
                                         <button onclick="openBulkExternalScoreModal()" class="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg font-bold transition">
-                                            <i class="fas fa-file-import mr-1"></i>Bulk CSV Import
+                                            <i class="fas fa-file-import mr-1"></i>Bulk Import
                                         </button>
                                     </div>
-                                    <p class="text-xs text-slate-500">Record or update student marks from external Google Forms quizzes, GitHub Pages HTML exercises, or practical exams directly into the Unified Gradebook.</p>
                                     <form id="form-record-external-score" class="space-y-3">
                                         <div>
                                             <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Select Student</label>
@@ -1306,10 +1102,10 @@
                                             </select>
                                         </div>
                                         <div>
-                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Select Assessment or Custom External Task</label>
+                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Select Assessment</label>
                                             <select id="ext-ass-select" onchange="handleExtAssessmentSelectChange()" class="w-full px-3 py-2 border rounded-lg text-xs bg-white">
                                                 ${gradableItems.map(g => `<option value="${g.id}" data-title="${g.title}" data-type="${g.type}" data-max="${g.maxScore}">[${g.type}] ${g.title} (Max: ${g.maxScore})</option>`).join('')}
-                                                <option value="CUSTOM">-- Enter Custom Google Form / GitHub Task Title --</option>
+                                                <option value="CUSTOM">-- Enter Custom Google Form Title --</option>
                                             </select>
                                         </div>
                                         <div id="ext-custom-fields" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1326,21 +1122,20 @@
                                                 <input type="number" id="ext-score" required min="0" step="0.5" placeholder="e.g. 18" class="w-full px-3 py-2 border rounded-lg text-xs">
                                             </div>
                                             <div>
-                                                <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Max Possible Score</label>
+                                                <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Max Score</label>
                                                 <input type="number" id="ext-max" required min="1" value="${gradableItems[0] ? gradableItems[0].maxScore : 20}" class="w-full px-3 py-2 border rounded-lg text-xs">
                                             </div>
                                         </div>
                                         <div>
-                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Verification / Reference Note (Optional)</label>
-                                            <input type="text" id="ext-note" placeholder="e.g. Imported from Google Forms Sheet / Verified" class="w-full px-3 py-2 border rounded-lg text-xs">
+                                            <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Reference Note</label>
+                                            <input type="text" id="ext-note" placeholder="e.g. Imported from Google Forms" class="w-full px-3 py-2 border rounded-lg text-xs">
                                         </div>
                                         <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-wider hover:bg-emerald-700 transition shadow-sm">
-                                            <i class="fas fa-save mr-1"></i> Save Score & Sync Gradebook
+                                            <i class="fas fa-save mr-1"></i> Save Score & Sync
                                         </button>
                                     </form>
                                 </div>
 
-                                <!-- Published Native Quizzes List -->
                                 <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                                     <div class="p-3.5 bg-slate-50 border-b">
                                         <h4 class="font-bold text-xs uppercase text-slate-700">Published Native Quizzes (${quizzes.length})</h4>
@@ -1367,22 +1162,20 @@
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                             <div class="p-4 bg-slate-50 border-b flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
                                 <div>
-                                    <h4 class="font-bold text-sm text-slate-800">Unified Department Gradebook (Native Quizzes, Google Forms & GitHub HTML Apps)</h4>
-                                    <p class="text-xs text-slate-500">Filter, verify student external claims, edit scores, or export the unified sheet.</p>
+                                    <h4 class="font-bold text-sm text-slate-800">Unified Department Gradebook</h4>
                                 </div>
                                 <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto">
                                     <select id="gb-type-filter" onchange="filterGradebookTable()" class="px-3 py-1.5 border rounded-lg text-xs bg-white">
-                                        <option value="ALL">All Types (Native + External)</option>
+                                        <option value="ALL">All Types</option>
                                         <option value="Native LMS Quiz">Native LMS Quiz</option>
                                         <option value="Google Form">Google Form</option>
                                         <option value="GitHub HTML App">GitHub HTML App</option>
-                                        <option value="Practical Assessment">Practical Assessment</option>
                                     </select>
                                     <select id="gb-class-filter" onchange="filterGradebookTable()" class="px-3 py-1.5 border rounded-lg text-xs bg-white">
                                         <option value="ALL">All 45 Classes</option>
                                         ${generateClassOptions('', true)}
                                     </select>
-                                    <input type="text" id="gb-search" oninput="filterGradebookTable()" placeholder="Search student or task..." class="px-3 py-1.5 border rounded-lg text-xs">
+                                    <input type="text" id="gb-search" oninput="filterGradebookTable()" placeholder="Search student..." class="px-3 py-1.5 border rounded-lg text-xs">
                                     <button onclick="exportGradebookCSV()" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 transition">
                                         <i class="fas fa-file-excel mr-1"></i> Export CSV
                                     </button>
@@ -1394,10 +1187,10 @@
                                         <tr class="bg-slate-100 text-[11px] text-slate-600 uppercase border-b">
                                             <th class="p-3">Date</th>
                                             <th class="p-3">Student (ID & Class)</th>
-                                            <th class="p-3">Assessment Title & Type</th>
+                                            <th class="p-3">Assessment Title</th>
                                             <th class="p-3">Score</th>
                                             <th class="p-3">Percentage</th>
-                                            <th class="p-3">Verification / Status</th>
+                                            <th class="p-3">Status</th>
                                             <th class="p-3 text-center">Actions</th>
                                         </tr>
                                     </thead>
@@ -1409,17 +1202,17 @@
                         </div>
                     </div>
 
-                    <!-- TAB 3: LEARNING MATERIALS & EXTERNAL ASSESSMENT LINKS MANAGER -->
+                    <!-- TAB 3: LEARNING MATERIALS -->
                     <div id="atab-content" class="space-y-6 hidden">
                         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                             <h3 class="text-base font-bold text-slate-900 mb-4 flex items-center space-x-2">
                                 <i class="fas fa-cloud-upload-alt text-emerald-600"></i>
-                                <span>Assign Learning Material or External Assessment (Google Form / GitHub HTML App)</span>
+                                <span>Assign Learning Material or External Assessment</span>
                             </h3>
                             <form id="form-add-material" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                 <div class="sm:col-span-2">
-                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Resource or External Task Title</label>
-                                    <input type="text" id="mat-title" required placeholder="e.g. Google Forms SQL Quiz / GitHub HTML5 Binary Game" class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Resource Title</label>
+                                    <input type="text" id="mat-title" required placeholder="e.g. Google Forms SQL Quiz" class="w-full px-3 py-2 border rounded-lg text-sm">
                                 </div>
                                 <div>
                                     <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Format / Type</label>
@@ -1428,23 +1221,23 @@
                                         <option value="Word">Word Document (.docx)</option>
                                         <option value="Video">Video Tutorial (YouTube / MP4)</option>
                                         <option value="Audio">Audio Lecture (.mp3 / .ogg)</option>
-                                        <option value="Google Form">Google Form Assessment (External Quiz)</option>
-                                        <option value="GitHub HTML App">GitHub Pages HTML File / Interactive App</option>
+                                        <option value="Google Form">Google Form Assessment</option>
+                                        <option value="GitHub HTML App">GitHub Pages HTML File</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Target Class or Year Group</label>
+                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Target Class</label>
                                     <select id="mat-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                         ${generateClassOptions(user.assignedClass && user.assignedClass !== 'All Classes' ? user.assignedClass : 'All Classes')}
                                     </select>
                                 </div>
                                 <div class="sm:col-span-2">
-                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Resource / Assessment URL (Google Forms, GitHub Pages, Drive, YouTube)</label>
-                                    <input type="url" id="mat-url" required placeholder="https://docs.google.com/forms/... or https://username.github.io/..." class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Resource URL</label>
+                                    <input type="url" id="mat-url" required placeholder="https://docs.google.com/forms/..." class="w-full px-3 py-2 border rounded-lg text-sm">
                                 </div>
                                 <div class="sm:col-span-2">
                                     <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Instructions / Summary</label>
-                                    <input type="text" id="mat-desc" placeholder="Complete the questions and click 'Submit Score Claim' to log your score in the Gradebook..." class="w-full px-3 py-2 border rounded-lg text-sm">
+                                    <input type="text" id="mat-desc" placeholder="Complete the questions..." class="w-full px-3 py-2 border rounded-lg text-sm">
                                 </div>
                                 <div class="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 flex items-center justify-between space-x-3">
                                     <div>
@@ -1452,7 +1245,6 @@
                                             <input type="checkbox" id="mat-gradable" class="rounded text-emerald-600 focus:ring-emerald-500">
                                             <span>Include in Gradebook</span>
                                         </label>
-                                        <p class="text-[10px] text-emerald-700 mt-0.5">Allows score tracking for this link</p>
                                     </div>
                                     <div class="w-20">
                                         <label class="block text-[10px] font-bold text-emerald-800 uppercase">MaxPts</label>
@@ -1466,7 +1258,7 @@
                         </div>
 
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                            <div class="p-4 bg-slate-50 border-b"><h4 class="font-bold text-sm text-slate-700">Published Learning Materials & External Assessment Links (${materials.length})</h4></div>
+                            <div class="p-4 bg-slate-50 border-b"><h4 class="font-bold text-sm text-slate-700">Published Learning Materials (${materials.length})</h4></div>
                             <div class="divide-y divide-slate-100">
                                 ${materials.map(m => `
                                     <div class="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1474,12 +1266,11 @@
                                             <div class="flex flex-wrap items-center gap-2">
                                                 <span class="bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded font-bold">${m.category}</span>
                                                 <span class="bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded font-medium">${m.classGroup}</span>
-                                                ${m.isGradable ? `<span class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded font-bold"><i class="fas fa-star mr-1"></i>Gradable (Max: ${m.maxScore} pts)</span>` : ''}
-                                                <span class="text-xs text-slate-400">${m.date} ${m.author ? '• By ' + m.author : ''}</span>
+                                                ${m.isGradable ? `<span class="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded font-bold"><i class="fas fa-star mr-1"></i>Gradable (Max: ${m.maxScore})</span>` : ''}
+                                                <span class="text-xs text-slate-400">${m.date}</span>
                                             </div>
                                             <h4 class="font-bold text-slate-800 text-sm mt-1">${m.title}</h4>
                                             <p class="text-xs text-slate-500">${m.description || ''}</p>
-                                            <a href="${m.url}" target="_blank" class="text-xs text-indigo-600 hover:underline font-mono">${m.url}</a>
                                         </div>
                                         <button onclick="deleteMaterial('${m.id}')" class="text-red-500 hover:text-red-700 text-xs px-3 py-1.5 bg-red-50 rounded font-semibold shrink-0"><i class="fas fa-trash"></i> Remove</button>
                                     </div>
@@ -1492,7 +1283,7 @@
                     <div id="atab-submissions" class="space-y-6 hidden">
                         <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                             <div class="p-4 bg-slate-50 border-b flex justify-between items-center">
-                                <h4 class="font-bold text-sm text-slate-800">Student Practical Coding & Project Showcase Submissions</h4>
+                                <h4 class="font-bold text-sm text-slate-800">Student Practical Coding Submissions</h4>
                                 <span class="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold">Total: ${submissions.length}</span>
                             </div>
                             <div class="overflow-x-auto">
@@ -1502,8 +1293,8 @@
                                             <th class="p-3">Student</th>
                                             <th class="p-3">Class</th>
                                             <th class="p-3">Project Title</th>
-                                            <th class="p-3">Repository / File Link</th>
-                                            <th class="p-3">Status & Feedback</th>
+                                            <th class="p-3">Link</th>
+                                            <th class="p-3">Status</th>
                                             <th class="p-3 text-center">Actions</th>
                                         </tr>
                                     </thead>
@@ -1545,7 +1336,7 @@
                                 ${announcements.map(a => `
                                     <div class="p-4 flex justify-between items-start">
                                         <div>
-                                            <span class="text-[11px] text-slate-400">${a.date} ${a.author ? '• ' + a.author : ''}</span>
+                                            <span class="text-[11px] text-slate-400">${a.date}</span>
                                             <h4 class="font-bold text-slate-800 text-sm">${a.title}</h4>
                                             <p class="text-xs text-slate-600 mt-1">${a.content}</p>
                                         </div>
@@ -1566,14 +1357,10 @@
                                         ${generateClassOptions('1AGRIC', false)}
                                     </select>
                                     <select id="tt-day" class="px-3 py-2 border rounded-lg text-xs bg-white">
-                                        <option value="Monday">Monday</option>
-                                        <option value="Tuesday">Tuesday</option>
-                                        <option value="Wednesday">Wednesday</option>
-                                        <option value="Thursday">Thursday</option>
-                                        <option value="Friday">Friday</option>
+                                        <option value="Monday">Monday</option><option value="Tuesday">Tuesday</option><option value="Wednesday">Wednesday</option><option value="Thursday">Thursday</option><option value="Friday">Friday</option>
                                     </select>
                                     <input type="text" id="tt-time" required placeholder="08:00 AM - 10:00 AM" class="px-3 py-2 border rounded-lg text-xs">
-                                    <input type="text" id="tt-lab" required placeholder="ICT Lab 1 / Instructor" class="px-3 py-2 border rounded-lg text-xs">
+                                    <input type="text" id="tt-lab" required placeholder="ICT Lab 1" class="px-3 py-2 border rounded-lg text-xs">
                                     <button type="submit" class="sm:col-span-2 py-2 bg-indigo-600 text-white rounded-lg font-bold text-xs uppercase hover:bg-indigo-700 transition">Add Timetable Slot & Sync</button>
                                 </form>
                             </div>
@@ -1583,7 +1370,7 @@
                                         <div>
                                             <span class="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded font-bold">${t.classGroup}</span>
                                             <h4 class="font-bold text-slate-800 text-sm mt-1">${t.day} • ${t.time}</h4>
-                                            <p class="text-xs text-slate-500">${t.lab} ${t.instructor ? '— ' + t.instructor : ''}</p>
+                                            <p class="text-xs text-slate-500">${t.lab}</p>
                                         </div>
                                         <button onclick="deleteTimetable('${t.id}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 bg-red-50 rounded"><i class="fas fa-trash"></i></button>
                                     </div>
@@ -1592,10 +1379,9 @@
                         </div>
                     </div>
 
-                    <!-- TAB 6: SCHOOL LOGO / BRANDING (ADMIN ONLY), CLOUD SYNC & STAFF DIRECTORY -->
+                    <!-- TAB 6: SETTINGS & CLOUD SYNC -->
                     <div id="atab-settings" class="grid grid-cols-1 lg:grid-cols-12 gap-6 hidden">
                         <div class="lg:col-span-5 space-y-6">
-                            <!-- School Branding & Custom Logo Upload Widget (Strictly Locked for Teachers) -->
                             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
                                 <div class="flex items-center justify-between border-b pb-3">
                                     <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
@@ -1670,7 +1456,6 @@
                             </div>
                         </div>
 
-                        <!-- ICT Department Teachers / Staff Management -->
                         <div class="lg:col-span-7 space-y-6">
                             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                                 <h3 class="text-base font-bold text-slate-900 mb-2 flex items-center space-x-2">
@@ -1763,12 +1548,8 @@
             }
             return attemptsList.map(a => {
                 const aType = a.assessmentType || 'Native LMS Quiz';
-                const badgeColor = aType === 'Native LMS Quiz'
-                    ? 'bg-purple-100 text-purple-800'
-                    : (aType === 'Google Form' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800');
-                const statusBadge = a.status === 'Pending Verification'
-                    ? `<span class="bg-amber-100 text-amber-800 text-[11px] px-2 py-0.5 rounded-full font-bold">Pending Verification</span>`
-                    : `<span class="bg-emerald-50 text-emerald-700 text-[11px] px-2 py-0.5 rounded-full font-semibold">${a.status || 'Verified'}</span>`;
+                const badgeColor = aType === 'Native LMS Quiz' ? 'bg-purple-100 text-purple-800' : (aType === 'Google Form' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800');
+                const statusBadge = a.status === 'Pending Verification' ? `<span class="bg-amber-100 text-amber-800 text-[11px] px-2 py-0.5 rounded-full font-bold">Pending Verification</span>` : `<span class="bg-emerald-50 text-emerald-700 text-[11px] px-2 py-0.5 rounded-full font-semibold">${a.status || 'Verified'}</span>`;
 
                 return `
                     <tr class="hover:bg-slate-50">
@@ -1805,7 +1586,7 @@
             const typeFilter = document.getElementById('gb-type-filter').value;
             const classFilter = document.getElementById('gb-class-filter').value;
             const query = document.getElementById('gb-search').value.trim().toLowerCase();
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
 
             const filtered = attempts.filter(a => {
                 const aType = a.assessmentType || 'Native LMS Quiz';
@@ -1814,7 +1595,6 @@
                 const matchesQuery = !query || a.studentName.toLowerCase().includes(query) || a.studentId.toLowerCase().includes(query) || a.quizTitle.toLowerCase().includes(query);
                 return matchesType && matchesClass && matchesQuery;
             });
-
             document.getElementById('gradebook-tbody').innerHTML = renderGradebookRowsHTML(filtered);
         }
 
@@ -1836,29 +1616,24 @@
             const customFields = document.getElementById('ext-custom-fields');
             const maxInput = document.getElementById('ext-max');
             if (!sel) return;
-
             if (sel.value === 'CUSTOM') {
                 customFields.classList.remove('hidden');
             } else {
                 customFields.classList.add('hidden');
                 const opt = sel.options[sel.selectedIndex];
-                if (opt && opt.dataset.max) {
-                    maxInput.value = opt.dataset.max;
-                }
+                if (opt && opt.dataset.max) { maxInput.value = opt.dataset.max; }
             }
         }
 
         function handleMaterialCategoryChange() {
             const cat = document.getElementById('mat-category').value;
             const gradableCheckbox = document.getElementById('mat-gradable');
-            if (cat === 'Google Form' || cat === 'GitHub HTML App') {
-                gradableCheckbox.checked = true;
-            }
+            if (cat === 'Google Form' || cat === 'GitHub HTML App') { gradableCheckbox.checked = true; }
         }
 
         function verifyExternalScore(attemptId) {
             const user = getCurrentUser();
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             const item = attempts.find(a => a.id === attemptId);
             if (item) {
                 item.status = 'Verified';
@@ -1870,7 +1645,7 @@
         }
 
         function openEditGradebookModal(attemptId) {
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             const item = attempts.find(a => a.id === attemptId);
             if (!item) return;
 
@@ -1906,7 +1681,7 @@
             const total = parseFloat(document.getElementById('edit-gb-total').value) || 1;
             const note = document.getElementById('edit-gb-note').value.trim();
 
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             const item = attempts.find(a => a.id === attemptId);
             if (item) {
                 item.score = score;
@@ -1923,7 +1698,7 @@
         }
 
         function deleteGradebookEntry(attemptId) {
-            let attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            let attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             attempts = attempts.filter(a => a.id !== attemptId);
             saveTableAndSync('QUIZ_ATTEMPTS', attempts);
             showToast('Entry Removed', 'Gradebook score record deleted.');
@@ -1965,8 +1740,8 @@
             const assessmentType = opt.dataset.type;
             const total = parseFloat(opt.dataset.max) || 20;
 
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-            let attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const students = safeGetList(DB_KEYS.STUDENTS);
+            let attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             const user = getCurrentUser();
             const nowStr = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
@@ -2019,7 +1794,7 @@
         }
 
         function exportRosterCSV() {
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+            const students = safeGetList(DB_KEYS.STUDENTS);
             const rows = [['Student ID', 'Full Name', 'Class Group', 'Username', 'Passcode', 'Material Completion %', 'Quiz Average %']];
             students.forEach(s => {
                 const prog = getStudentProgressStats(s.id, s.classGroup);
@@ -2031,7 +1806,7 @@
         }
 
         function exportGradebookCSV() {
-            const attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
+            const attempts = safeGetList(DB_KEYS.QUIZ_ATTEMPTS);
             const rows = [['Date', 'Student ID', 'Student Name', 'Class', 'Assessment Type', 'Assessment Title', 'Score', 'Total', 'Percentage', 'Status', 'Verification Note', 'Recorded By']];
             attempts.forEach(a => {
                 rows.push([a.date, a.studentId, a.studentName, a.classGroup, a.assessmentType || 'Native LMS Quiz', a.quizTitle, a.score, a.total, a.percentage + '%', a.status || 'Verified', a.verificationNote || '', a.recordedBy || '']);
@@ -2070,7 +1845,7 @@
             const backup = {};
             Object.values(DB_KEYS).forEach(k => {
                 if (k !== DB_KEYS.CURRENT_USER) {
-                    backup[k] = JSON.parse(localStorage.getItem(k) || 'null');
+                    try { backup[k] = JSON.parse(localStorage.getItem(k) || 'null'); } catch(e){}
                 }
             });
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
@@ -2112,14 +1887,30 @@
             renderApp();
         }
 
-        // --- APP INITIALIZATION ---
+        // --- APP INITIALIZATION & RECOVERY ---
         window.onload = async function() {
-            initDatabase();
-            renderApp();
-            if (getCloudSyncUrl()) {
-                await pullFromCloud(false);
-            } else {
-                setCloudBadgeStatus('local', 'Local Mode');
+            try {
+                initDatabase();
+                renderApp();
+                if (getCloudSyncUrl()) {
+                    await pullFromCloud(false);
+                } else {
+                    setCloudBadgeStatus('local', 'Local Mode');
+                }
+            } catch (error) {
+                document.body.innerHTML = `
+                    <div class="flex items-center justify-center min-h-screen bg-slate-900 p-6">
+                        <div class="bg-white p-8 rounded-2xl max-w-md w-full text-center shadow-2xl">
+                            <i class="fas fa-exclamation-triangle text-red-600 text-5xl mb-4"></i>
+                            <h2 class="text-xl font-black text-slate-900">Browser Cache Conflict</h2>
+                            <p class="text-sm text-slate-600 mt-2 mb-6">Your browser has mixed up the files from an older version of this app with the new code.</p>
+                            <button onclick="localStorage.clear(); location.reload();" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold uppercase tracking-wider transition shadow-md">
+                                <i class="fas fa-trash-alt mr-1.5"></i> Clear Cache & Reset App
+                            </button>
+                            <p class="text-[10px] text-slate-400 mt-4">Error details: ${error.message}</p>
+                        </div>
+                    </div>
+                `;
             }
         };
     </script>
