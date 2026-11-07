@@ -63,7 +63,7 @@
     <!-- Footer -->
     <footer class="bg-white border-t border-slate-200 py-4 px-4 text-center text-xs text-slate-500 flex flex-col sm:flex-row justify-between items-center max-w-7xl mx-auto w-full gap-2">
         <div>
-            <strong>Assin Nsuta SHS ICT Department LMS & Portal</strong> &copy; 2026. Cloud-Synced & Offline-Resilient System.
+            <strong>Assin Nsuta Agric SHS Science Department LMS & Portal</strong> &copy; 2026.
         </div>
         <div class="flex flex-wrap items-center justify-center gap-3">
             <span id="cloud-sync-badge" onclick="pullFromCloud(true)" class="cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition" title="Click to sync with Google Sheets Cloud">
@@ -72,8 +72,6 @@
             <span id="network-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
                 <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Online Mode
             </span>
-            <span class="text-slate-400">|</span>
-            <span>45 Classes Active (SHS 1 - 3)</span>
         </div>
     </footer>
 
@@ -896,7 +894,7 @@
                             <p class="text-[10px] font-bold text-slate-400 uppercase text-center mb-2">Instant One-Click Demo Logins (All Roles)</p>
                             <div class="grid grid-cols-2 gap-1.5 mb-1.5">
                                 <button type="button" onclick="quickAdminLogin()" class="p-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-center transition">
-                                    <div class="text-xs font-bold text-primary"><i class="fas fa-user-shield mr-1"></i>HoD / Admin</div>
+                                    <div class="text-xs font-bold text-primary"><i class="fas fa-user-shield mr-1"></i>HoD/ Supper Admin</div>
                                     <div class="text-[10px] text-slate-500">HOD Control & Logo</div>
                                 </button>
                                 <button type="button" onclick="quickTeacherLogin('akosua.staff', '1234')" class="p-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-center transition">
@@ -1034,8 +1032,8 @@
                     : (pass === 'admin123' || pass === 'admin');
 
                 if (validPasscode) {
-                    localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'HoD', assignedClass: 'All Classes' }));
-                    showToast('HoD Login Successful', 'Welcome to the Assin Nsuta SHS ICT Control Panel.');
+                    localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'HoD/ Supper Admin', assignedClass: 'All Classes' }));
+                    showToast('HoD/ Supper Admin Login Successful', 'Welcome to the Assin Nsuta SHS ICT Control Panel.');
                     renderApp();
                 } else {
                     showToast('Access Denied', 'Incorrect admin passcode.', true);
