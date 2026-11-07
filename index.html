@@ -1032,7 +1032,7 @@
                     : (pass === 'admin123' || pass === 'admin');
 
                 if (validPasscode) {
-                    localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'HoD/ Supper Admin', assignedClass: 'All Classes' }));
+                    localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'HoD', assignedClass: 'All Classes' }));
                     showToast('HoD/ Supper Admin Login Successful', 'Welcome to the Assin Nsuta SHS ICT Control Panel.');
                     renderApp();
                 } else {
@@ -1069,7 +1069,7 @@
                                         ${isSuperAdmin ? 'HOD / Super Admin' : 'Teacher Portal'}
                                     </span>
                                 </div>
-                                <p class="text-xs text-blue-200">Logged in: <b>${user.name}</b> ${user.assignedClass ? `• Assigned: ${user.assignedClass}` : ''}</p>
+                                <p class="text-xs text-blue-200">Logged in: <b>${user.name}</b>${isSuperAdmin ? '/Super Admin' : ''} ${user.assignedClass ? `• Assigned: ${user.assignedClass}` : ''}</p>
                             </div>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
