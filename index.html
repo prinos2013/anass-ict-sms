@@ -101,8 +101,7 @@
             FAQS: 'anass_lms_faqs_v7',
             CURRENT_USER: 'anass_lms_current_user_v7',
             CLOUD_URL: 'anass_lms_cloud_url_v7',
-            PENDING_SYNC: 'anass_lms_pending_sync_v7',
-            ROSTER_PENDING: 'anass_lms_roster_pending_v1'
+            PENDING_SYNC: 'anass_lms_pending_sync_v7'
         };
 
         // Map internal DB_KEYS to Google Sheet Tab Names
@@ -136,11 +135,13 @@
 
         let builderQuestions = [];
 
-        // --- TWO-WAY GOOGLE SHEETS CLOUD SYNC ENGINE ---
+        // --- VERIFIED TABULAR GOOGLE SHEETS CLOUD SYNC ENGINE ---
+        // The Apps Script backend stores one record per row and returns the same arrays
+        // expected by this portal. POSTs are followed by GET read-back verification.
         function getCloudSyncUrl() {
             const s = getSettings();
-            return (s.cloudSyncUrl && s.cloudSyncUrl.trim() !== '') 
-                ? s.cloudSyncUrl.trim() 
+            return (s.cloudSyncUrl && s.cloudSyncUrl.trim() !== '')
+                ? s.cloudSyncUrl.trim()
                 : (localStorage.getItem(DB_KEYS.CLOUD_URL) || DEFAULT_CLOUD_SYNC_URL).trim();
         }
 
@@ -152,93 +153,120 @@
                 badge.innerHTML = `<i class="fas fa-sync fa-spin mr-1.5"></i> ${text || 'Syncing Cloud...'}`;
             } else if (state === 'synced') {
                 badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800";
-                badge.innerHTML = `<i class="fas fa-cloud-check mr-1.5"></i> ${text || 'Cloud Synced'}`;
+                badge.innerHTML = `<i class="fas fa-cloud-check mr-1.5"></i> ${text || 'Cloud Verified'}`;
             } else if (state === 'pending') {
                 badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800";
-                badge.innerHTML = `<i class="fas fa-cloud-upload-alt mr-1.5"></i> ${text || 'Queued Offline'}`;
+                badge.innerHTML = `<i class="fas fa-cloud-upload-alt mr-1.5"></i> ${text || 'Sync Pending'}`;
             } else {
                 badge.className = "cursor-pointer inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600";
                 badge.innerHTML = `<i class="fas fa-cloud mr-1.5"></i> ${text || 'Local Mode (No Cloud URL)'}`;
             }
         }
 
-        // Save table to localStorage AND push to Google Sheets Cloud
+        function stableCloudValue(value) {
+            if (Array.isArray(value)) return value.map(stableCloudValue);
+            if (value && typeof value === 'object') {
+                return Object.keys(value).sort().reduce((out, key) => {
+                    out[key] = stableCloudValue(value[key]);
+                    return out;
+                }, {});
+            }
+            return value;
+        }
+
+        function cloudValuesMatch(a, b) {
+            return JSON.stringify(stableCloudValue(a)) === JSON.stringify(stableCloudValue(b));
+        }
+
+        async function postCloudPayload(url, payload) {
+            // Apps Script accepts text/plain requests without a preflight request.
+            await fetch(url, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload)
+            });
+            // no-cors responses are opaque. A successful fetch only means the request
+            // was dispatched, so verification is done by reading the data back.
+            const response = await fetch(url + '?verify=' + Date.now(), { method: 'GET', cache: 'no-store' });
+            if (!response.ok) throw new Error('Cloud read-back failed: HTTP ' + response.status);
+            const result = await response.json();
+            if (!result || result.status !== 'success' || !result.data) {
+                throw new Error((result && result.message) || 'Cloud returned an invalid response.');
+            }
+            return result.data;
+        }
+
         async function saveTableAndSync(tableName, dataObj) {
             const storageKey = TABLE_KEY_MAP[tableName];
-            if (!storageKey) return;
+            if (!storageKey) return false;
             localStorage.setItem(storageKey, JSON.stringify(dataObj));
 
             const url = getCloudSyncUrl();
             if (!url) {
                 setCloudBadgeStatus('local', 'Local Mode');
-                return;
+                return false;
             }
-
             if (!navigator.onLine) {
                 localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
-                setCloudBadgeStatus('pending', 'Saved Locally (Offline Queue)');
-                return;
+                setCloudBadgeStatus('pending', 'Saved Locally — Offline');
+                return false;
             }
 
-            setCloudBadgeStatus('syncing', 'Saving to Cloud...');
+            setCloudBadgeStatus('syncing', 'Saving ' + tableName + '...');
             try {
-                await fetch(url, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: 'SYNC_TABLE',
-                        table: tableName,
-                        records: dataObj
-                    })
+                const cloudData = await postCloudPayload(url, {
+                    action: 'SYNC_TABLE', table: tableName, records: dataObj
                 });
+                if (!cloudValuesMatch(cloudData[tableName], dataObj)) {
+                    throw new Error(tableName + ' read-back did not match the saved records.');
+                }
                 localStorage.removeItem(DB_KEYS.PENDING_SYNC);
-                setCloudBadgeStatus('synced', 'Cloud Synced');
+                setCloudBadgeStatus('synced', tableName + ' Verified');
+                return true;
             } catch (err) {
                 localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
-                setCloudBadgeStatus('pending', 'Sync Retry Queued');
+                setCloudBadgeStatus('pending', 'Cloud Save Needs Attention');
+                console.error('ANASS cloud sync error:', err);
+                return false;
             }
         }
 
-        // Push ALL local tables to Google Sheets Cloud at once
         async function pushAllTablesToCloud(showNotification = true) {
             const url = getCloudSyncUrl();
             if (!url) {
-                if (showNotification) showToast('Cloud URL Missing', 'Please paste your Google Apps Script Web App URL first.', true);
-                return;
+                if (showNotification) showToast('Cloud URL Missing', 'Please configure the Google Apps Script Web App URL first.', true);
+                return false;
             }
             setCloudBadgeStatus('syncing', 'Pushing All Data...');
             const payloadData = {};
             Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                 const raw = localStorage.getItem(TABLE_KEY_MAP[tableName]);
-                payloadData[tableName] = raw ? JSON.parse(raw) : null;
+                payloadData[tableName] = raw ? JSON.parse(raw) : (tableName === 'SETTINGS' ? {} : []);
             });
-
             try {
-                await fetch(url, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({
-                        action: 'SYNC_ALL',
-                        data: payloadData
-                    })
-                });
+                const cloudData = await postCloudPayload(url, { action: 'SYNC_ALL', data: payloadData });
+                const allVerified = Object.keys(payloadData).every(name =>
+                    cloudValuesMatch(cloudData[name], payloadData[name]));
+                if (!allVerified) throw new Error('One or more tables failed read-back verification.');
                 localStorage.removeItem(DB_KEYS.PENDING_SYNC);
-                setCloudBadgeStatus('synced', 'All Data Pushed');
-                if (showNotification) showToast('Cloud Push Complete', 'All local students, teachers, quizzes, and grades pushed to Google Sheets.');
+                setCloudBadgeStatus('synced', 'All Tables Verified');
+                if (showNotification) showToast('Cloud Database Verified', 'All portal tables were written and read back successfully.');
+                return true;
             } catch (err) {
-                setCloudBadgeStatus('pending', 'Push Failed');
-                if (showNotification) showToast('Cloud Push Error', 'Could not reach Google Sheets. Check connection.', true);
+                localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
+                setCloudBadgeStatus('pending', 'Some Tables Not Verified');
+                console.error('ANASS full sync error:', err);
+                if (showNotification) showToast('Cloud Sync Needs Attention', err.message || 'Could not verify all Google Sheets tables.', true);
+                return false;
             }
         }
 
-        // Pull latest records from Google Sheets Cloud into browser localStorage
         async function pullFromCloud(showNotification = false) {
             const url = getCloudSyncUrl();
             if (!url) {
                 setCloudBadgeStatus('local', 'Local Mode');
-                if (showNotification) showToast('Local Mode Active', 'HOD can add a Google Apps Script URL in Tab 6 to enable Cloud Sync.');
+                if (showNotification) showToast('Local Mode Active', 'Configure the Google Apps Script Web App URL to enable cloud sync.', true);
                 return false;
             }
             if (!navigator.onLine) {
@@ -248,54 +276,55 @@
 
             setCloudBadgeStatus('syncing', 'Fetching Cloud Updates...');
             try {
-                const res = await fetch(url + '?t=' + Date.now());
+                const res = await fetch(url + '?t=' + Date.now(), { method: 'GET', cache: 'no-store' });
+                if (!res.ok) throw new Error('Cloud read failed: HTTP ' + res.status);
                 const json = await res.json();
-                if (json && json.status === 'success' && json.data) {
-                    let updatedAny = false;
-                    Object.keys(TABLE_KEY_MAP).forEach(tableName => {
-                        const cloudVal = json.data[tableName];
-                        // Protect a locally imported roster until its cloud copy is verified.
-                        if (tableName === 'STUDENTS' && localStorage.getItem(DB_KEYS.ROSTER_PENDING) === 'true') return;
-                        if (cloudVal !== null && cloudVal !== undefined) {
-                            // Preserve cloudSyncUrl if pulling SETTINGS
-                            if (tableName === 'SETTINGS') {
-                                const localSettings = getSettings();
-                                cloudVal.cloudSyncUrl = cloudVal.cloudSyncUrl || url;
-                                cloudVal.adminPasscode = cloudVal.adminPasscode || localSettings.adminPasscode || 'admin123';
-                                if (cloudVal.schoolCrestVersion !== SCHOOL_CREST_VERSION) {
-                                    cloudVal.logoUrl = '';
-                                    cloudVal.schoolCrestVersion = SCHOOL_CREST_VERSION;
-                                }
-                            }
-                            localStorage.setItem(TABLE_KEY_MAP[tableName], JSON.stringify(cloudVal));
-                            updatedAny = true;
-                        }
-                    });
-
-                    // Refresh active logged-in user session if their record updated
-                    const curr = getCurrentUser();
-                    if (curr && curr.role === 'student') {
-                        const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-                        const freshStu = stuList.find(s => s.id === curr.id);
-                        if (freshStu) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'student', ...freshStu }));
-                    } else if (curr && curr.role === 'teacher') {
-                        const tchList = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-                        const freshTch = tchList.find(t => t.id === curr.id);
-                        if (freshTch) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'teacher', ...freshTch }));
-                    }
-
-                    setCloudBadgeStatus('synced', 'Cloud Synced');
-                    if (showNotification) showToast('Cloud Synced!', 'Latest updates from teachers and students loaded.');
-                    if (updatedAny && !activeQuizState.timerInterval) {
-                        renderApp();
-                    }
-                    return true;
+                if (!json || json.status !== 'success' || !json.data) {
+                    throw new Error((json && json.message) || 'Invalid cloud response.');
                 }
+
+                let updatedAny = false;
+                Object.keys(TABLE_KEY_MAP).forEach(tableName => {
+                    const cloudVal = json.data[tableName];
+                    if (cloudVal !== null && cloudVal !== undefined) {
+                        let normalizedCloudVal = cloudVal;
+                        if (tableName === 'SETTINGS') {
+                            const localSettings = getSettings();
+                            if (Array.isArray(normalizedCloudVal)) normalizedCloudVal = normalizedCloudVal[0] || {};
+                            normalizedCloudVal = normalizedCloudVal && typeof normalizedCloudVal === 'object' ? normalizedCloudVal : {};
+                            normalizedCloudVal.cloudSyncUrl = normalizedCloudVal.cloudSyncUrl || url;
+                            normalizedCloudVal.adminPasscode = normalizedCloudVal.adminPasscode || normalizedCloudVal.admin_passcode || localSettings.adminPasscode || localSettings.admin_passcode || 'admin123';
+                            if (normalizedCloudVal.schoolCrestVersion !== SCHOOL_CREST_VERSION) {
+                                normalizedCloudVal.logoUrl = normalizedCloudVal.logoUrl || '';
+                                normalizedCloudVal.schoolCrestVersion = SCHOOL_CREST_VERSION;
+                            }
+                        }
+                        localStorage.setItem(TABLE_KEY_MAP[tableName], JSON.stringify(normalizedCloudVal));
+                        updatedAny = true;
+                    }
+                });
+
+                const curr = getCurrentUser();
+                if (curr && curr.role === 'student') {
+                    const stuList = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                    const freshStu = stuList.find(s => s.id === curr.id);
+                    if (freshStu) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'student', ...freshStu }));
+                } else if (curr && curr.role === 'teacher') {
+                    const tchList = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                    const freshTch = tchList.find(t => t.id === curr.id);
+                    if (freshTch) localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'teacher', ...freshTch }));
+                }
+
+                setCloudBadgeStatus('synced', 'Cloud Data Loaded');
+                if (showNotification) showToast('Cloud Synced', 'Latest tabular records loaded from Google Sheets.');
+                if (updatedAny && !activeQuizState.timerInterval) renderApp();
+                return true;
             } catch (err) {
                 setCloudBadgeStatus('pending', 'Cloud Unreachable');
-                if (showNotification) showToast('Sync Notice', 'Using cached offline data.', true);
+                console.error('ANASS cloud pull error:', err);
+                if (showNotification) showToast('Cloud Sync Notice', 'Using cached portal data. ' + (err.message || ''), true);
+                return false;
             }
-            return false;
         }
 
         // --- INITIALIZE SAMPLE DATA ---
@@ -321,23 +350,143 @@
                 }
             }
 
-            if (!localStorage.getItem(DB_KEYS.TEACHERS)) localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.TEACHERS)) {
+                const sampleTeachers = [
+                    { id: 'STF-101', name: 'Madam Akosua Owusu', username: 'akosua.staff', passcode: '1234', assignedClass: 'All SHS 1', subjectRole: 'Programming & Web Design' },
+                    { id: 'STF-102', name: 'Mr. Emmanuel Mensah', username: 'mensah.staff', passcode: '1234', assignedClass: 'All SHS 2', subjectRole: 'Networking & Hardware' },
+                    { id: 'STF-103', name: 'Mr. Isaac Boateng', username: 'boateng.staff', passcode: '1234', assignedClass: 'All SHS 3', subjectRole: 'Database Systems & WASSCE Prep' }
+                ];
+                localStorage.setItem(DB_KEYS.TEACHERS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.STUDENTS)) localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.STUDENTS)) {
+                const sampleStudents = [
+                    { id: 'ANASS-1001', name: 'Kwame Mensah', username: 'kwame', passcode: '1234', classGroup: '1SCI' },
+                    { id: 'ANASS-1002', name: 'Abena Ofori', username: 'abena', passcode: '1234', classGroup: '1ARTS 1' },
+                    { id: 'ANASS-2001', name: 'Kofi Boateng', username: 'kofi', passcode: '1234', classGroup: '2BUS' },
+                    { id: 'ANASS-3001', name: 'Akosua Serwaa', username: 'akosua', passcode: '1234', classGroup: '3H/E 1A' }
+                ];
+                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.MATERIALS)) localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.MATERIALS)) {
+                const sampleMaterials = [
+                    { id: 'MAT-1', title: 'Introduction to Computer Hardware & Peripherals', category: 'PDF', classGroup: 'All Classes', url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf', date: '2026-03-01', description: 'Comprehensive PDF guide covering input, output, processing, and storage devices with diagrams.', isGradable: false, maxScore: 0, author: 'HoD' },
+                    { id: 'MAT-2', title: 'Python Programming Fundamentals (Variables & Loops)', category: 'Video', classGroup: 'All SHS 1', url: 'https://www.youtube.com/watch?v=rfscVS0vtbw', date: '2026-03-02', description: 'Video lecture introducing Python syntax, variables, loops, and basic Tkinter GUI concepts.', isGradable: false, maxScore: 0, author: 'Madam Akosua Owusu' },
+                    { id: 'MAT-3', title: 'Networking Topologies & OSI Model Audio Summary', category: 'Audio', classGroup: 'All Classes', url: 'https://actions.google.com/sounds/v1/ambiences/coffee_shop.ogg', date: '2026-03-03', description: 'Quick revision audio guide explaining Star, Bus, Ring, and Mesh network topologies.', isGradable: false, maxScore: 0, author: 'Mr. Emmanuel Mensah' },
+                    { id: 'MAT-4', title: 'Database Management & SQL Practice Notes (.docx)', category: 'Word', classGroup: 'All SHS 2', url: 'https://docs.google.com/document/create', date: '2026-03-04', description: 'Downloadable Microsoft Word worksheet on Relational Databases, Primary Keys, and SQL Queries.', isGradable: false, maxScore: 0, author: 'Mr. Isaac Boateng' },
+                    { id: 'MAT-5', title: 'Google Forms Mid-Term ICT Theory Assessment', category: 'Google Form', classGroup: 'All Classes', url: 'https://docs.google.com/forms', date: '2026-03-05', description: 'Complete this external Google Form quiz and submit your score or verification code to the Gradebook.', isGradable: true, maxScore: 20, author: 'HoD' },
+                    { id: 'MAT-6', title: 'GitHub Interactive HTML5 & Logic Gate Simulator Test', category: 'GitHub HTML App', classGroup: 'All Classes', url: 'https://developer.mozilla.org/en-US/docs/Web/HTML', date: '2026-03-06', description: 'Complete the interactive HTML5 exercise hosted on GitHub Pages and log your final score.', isGradable: true, maxScore: 50, author: 'Madam Akosua Owusu' }
+                ];
+                localStorage.setItem(DB_KEYS.MATERIALS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.QUIZZES)) localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.QUIZZES)) {
+                const sampleQuizzes = [
+                    {
+                        id: 'QUIZ-101',
+                        title: 'Core ICT & Computing Fundamentals Quiz 1',
+                        classGroup: 'All Classes',
+                        timeLimit: 10,
+                        date: '2026-03-05',
+                        author: 'HoD',
+                        questions: [
+                            {
+                                q: 'Which component of the computer is primarily responsible for executing arithmetic and logical operations?',
+                                options: ['Random Access Memory (RAM)', 'Arithmetic Logic Unit (ALU)', 'Hard Disk Drive (HDD)', 'Power Supply Unit (PSU)'],
+                                correct: 1
+                            },
+                            {
+                                q: 'Which of the following is an example of system software?',
+                                options: ['Microsoft Word', 'Ubuntu Linux Operating System', 'Adobe Photoshop', 'Google Chrome Browser'],
+                                correct: 1
+                            },
+                            {
+                                q: 'In HTML5, which tag is used to create a hyperlink to another webpage or resource?',
+                                options: ['<link>', '<a>', '<href>', '<url>'],
+                                correct: 1
+                            },
+                            {
+                                q: 'What does LAN stand for in computer networking?',
+                                options: ['Large Access Network', 'Local Area Network', 'Logical Array Node', 'Link Access Number'],
+                                correct: 1
+                            },
+                            {
+                                q: 'In Python, which keyword is used to define a function?',
+                                options: ['func', 'define', 'def', 'function'],
+                                correct: 2
+                            }
+                        ]
+                    },
+                    {
+                        id: 'QUIZ-102',
+                        title: 'SHS 1 Hardware & Binary Number System Test',
+                        classGroup: 'All SHS 1',
+                        timeLimit: 8,
+                        date: '2026-03-06',
+                        author: 'Madam Akosua Owusu',
+                        questions: [
+                            {
+                                q: 'Convert the binary number 1010 into decimal (base 10).',
+                                options: ['8', '10', '12', '14'],
+                                correct: 1
+                            },
+                            {
+                                q: 'Which memory type is volatile and loses its contents when power is turned off?',
+                                options: ['ROM', 'RAM', 'SSD', 'Flash Drive'],
+                                correct: 1
+                            },
+                            {
+                                q: 'Which device is strictly an INPUT device?',
+                                options: ['Plotter', 'Optical Barcode Scanner', 'Projector', 'Speaker'],
+                                correct: 1
+                            }
+                        ]
+                    }
+                ];
+                localStorage.setItem(DB_KEYS.QUIZZES, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS)) localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS)) {
+                const sampleAttempts = [
+                    { id: 'ATT-1', quizId: 'QUIZ-101', quizTitle: 'Core ICT & Computing Fundamentals Quiz 1', assessmentType: 'Native LMS Quiz', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', score: 4, total: 5, percentage: 80, status: 'Auto-Graded', verificationNote: 'Built-in Quiz Runner', recordedBy: 'System', date: '2026-03-05 14:20' },
+                    { id: 'ATT-2', quizId: 'MAT-5', quizTitle: 'Google Forms Mid-Term ICT Theory Assessment', assessmentType: 'Google Form', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', score: 18, total: 20, percentage: 90, status: 'Verified', verificationNote: 'Google Form Response #GF-882', recordedBy: 'Madam Akosua Owusu', date: '2026-03-06 09:15' },
+                    { id: 'ATT-3', quizId: 'MAT-6', quizTitle: 'GitHub Interactive HTML5 & Logic Gate Simulator Test', assessmentType: 'GitHub HTML App', studentId: 'ANASS-2001', studentName: 'Kofi Boateng', classGroup: '2BUS', score: 44, total: 50, percentage: 88, status: 'Pending Verification', verificationNote: 'Completed GitHub quiz, verification code: GH-4450', recordedBy: 'Student Claim', date: '2026-03-06 11:40' }
+                ];
+                localStorage.setItem(DB_KEYS.QUIZ_ATTEMPTS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.PROGRESS)) localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify({}));
+            if (!localStorage.getItem(DB_KEYS.PROGRESS)) {
+                const sampleProgress = {
+                    'ANASS-1001': ['MAT-1', 'MAT-2', 'MAT-5']
+                };
+                localStorage.setItem(DB_KEYS.PROGRESS, JSON.stringify({})); // Empty on first install; existing progress is preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.ANNOUNCEMENTS)) localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.ANNOUNCEMENTS)) {
+                const sampleAnnouncements = [
+                    { id: 'ANN-1', title: 'SHS 1 - 3 Practical & External Assessment Week', content: 'All classes are reminded to complete both their Native LMS Quizzes and their assigned Google Form / GitHub HTML assessments before Friday.', date: '2026-03-04', author: 'HoD' },
+                    { id: 'ANN-2', title: 'ICT Coding & Robotics Club Meeting', content: 'Students working on Python/Tkinter and HTML5 projects should submit their GitHub repository or Google Drive links via the Project Showcase tab.', date: '2026-03-02', author: 'Madam Akosua Owusu' }
+                ];
+                localStorage.setItem(DB_KEYS.ANNOUNCEMENTS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.SUBMISSIONS)) localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.SUBMISSIONS)) {
+                const sampleSubmissions = [
+                    { id: 'SUB-1', studentId: 'ANASS-1001', studentName: 'Kwame Mensah', classGroup: '1SCI', projectTitle: 'Student Attendance Calculator (Python/Tkinter)', projectUrl: 'https://github.com/kwame-anass/attendance-calculator', status: 'Graded (92% - Excellent UI)', date: '2026-03-04' },
+                    { id: 'SUB-2', studentId: 'ANASS-2001', studentName: 'Kofi Boateng', classGroup: '2BUS', projectTitle: 'Assin Nsuta School Club Webpage (HTML/CSS)', projectUrl: 'https://github.com/kofi-anass/club-site', status: 'Pending Review', date: '2026-03-05' }
+                ];
+                localStorage.setItem(DB_KEYS.SUBMISSIONS, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
-            if (!localStorage.getItem(DB_KEYS.TIMETABLE)) localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify([]));
+            if (!localStorage.getItem(DB_KEYS.TIMETABLE)) {
+                const sampleTimetable = [
+                    { id: 'TT-1', classGroup: '1SCI', day: 'Monday', time: '08:00 AM - 10:00 AM', lab: 'ICT Lab 1 (Main)', instructor: 'HoD' },
+                    { id: 'TT-2', classGroup: '2BUS', day: 'Wednesday', time: '10:30 AM - 12:30 PM', lab: 'ICT Lab 2', instructor: 'Madam Akosua Owusu' },
+                    { id: 'TT-3', classGroup: '3H/E 1A', day: 'Friday', time: '01:00 PM - 03:00 PM', lab: 'Hardware & Networking Lab', instructor: 'Mr. Emmanuel Mensah' }
+                ];
+                localStorage.setItem(DB_KEYS.TIMETABLE, JSON.stringify([])); // Empty on first install; existing records are preserved.
+            }
 
             if (!localStorage.getItem(DB_KEYS.FAQS)) {
                 const sampleFaqs = [
@@ -345,34 +494,23 @@
                     { id: 'FAQ-2', question: 'How do I submit scores for external Google Forms or GitHub HTML tests?', answer: 'Open the external link from your Learning Hub or Assessments tab. Once completed, click "Submit Score Claim" on the card to send your score and verification note directly to the Unified Gradebook.' },
                     { id: 'FAQ-3', question: 'How do I take a built-in ICT Quiz and get my score?', answer: 'Navigate to the "Quizzes & My Gradebook" tab in your Student Portal, click "Start Interactive Quiz Now", answer the multiple-choice questions before the countdown timer ends, and click Submit for instant auto-grading.' }
                 ];
-                localStorage.setItem(DB_KEYS.FAQS, JSON.stringify(sampleFaqs));
+                localStorage.setItem(DB_KEYS.FAQS, JSON.stringify([])); // Empty on first install; existing records are preserved.
             }
-        }
-
-
-        function confirmRemoval(itemLabel) {
-            return window.confirm(`Do you want to Remove/Delete ${itemLabel}? This action cannot be undone.`);
-        }
-        function confirmRecordId(actionLabel, expectedId) {
-            const entered = window.prompt(`${actionLabel}\nEnter the exact ID to confirm: ${expectedId}`);
-            if (entered === null) return false;
-            if (entered.trim().toUpperCase() !== String(expectedId).toUpperCase()) {
-                showToast('ID Does Not Match', 'The record was not removed. Enter the exact ID shown.', true);
-                return false;
-            }
-            return confirmRemoval(actionLabel);
         }
 
         // --- BRANDING & LOGO HELPERS ---
         function getSettings() {
             const raw = localStorage.getItem(DB_KEYS.SETTINGS);
-            return raw ? JSON.parse(raw) : { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL };
+            if (!raw) return { schoolName: 'Assin Nsuta SHS', departmentName: 'ICT Department LMS & Portal', motto: 'Excellence Through Technology', logoUrl: '', cloudSyncUrl: DEFAULT_CLOUD_SYNC_URL };
+            let settings = JSON.parse(raw);
+            if (Array.isArray(settings)) settings = settings[0] || {};
+            return settings && typeof settings === 'object' ? settings : {};
         }
 
-        // Supports existing installations that do not yet have an adminPasscode setting.
         function getAdminPasscode() {
             const settings = getSettings();
-            return settings.adminPasscode || 'admin123';
+            const stored = settings.adminPasscode || settings.admin_passcode || settings.ADMIN_PASSCODE || settings.hodPasscode || settings.hod_passcode;
+            return String(stored || 'admin123').trim();
         }
 
         function renderSchoolLogoHTML(sizeClasses = 'w-12 h-12', iconTextSize = 'text-xl') {
@@ -438,8 +576,6 @@
 
         function isAssignedToStudent(targetGroup, studentClass) {
             if (!studentClass) return false;
-            if (Array.isArray(targetGroup)) return targetGroup.some(g => isAssignedToStudent(g, studentClass));
-            if (typeof targetGroup === 'string' && targetGroup.includes(',')) return targetGroup.split(',').map(x => x.trim()).some(g => isAssignedToStudent(g, studentClass));
             if (targetGroup === 'All Classes') return true;
             if (targetGroup === studentClass) return true;
             if (targetGroup === 'All SHS 1' && (ANASS_CLASSES['SHS 1'].includes(studentClass) || studentClass.startsWith('1') || studentClass.startsWith('SHS 1'))) return true;
@@ -787,6 +923,8 @@
                             </div>
                             <button type="submit" class="w-full py-3 bg-primary text-white rounded-xl font-bold text-sm hover:bg-blue-900 transition shadow-md">Access Super Admin Control Suite</button>
                         </form>
+
+                                                </div>
                     </div>
                 </div>
             `;
@@ -820,20 +958,52 @@
             }
         }
 
+        function authText(value) {
+            return value === null || value === undefined ? '' : String(value).trim();
+        }
+
+        function normalizeStudentAuthRecord(record) {
+            const r = record || {};
+            return {
+                ...r,
+                id: authText(r.id || r.studentId || r.student_id || r.studentID || r['Student ID']),
+                username: authText(r.username || r.userName || r.user_name || r['Username']),
+                passcode: authText(r.passcode || r.passCode || r.password || r.PASSCODE || r['Passcode']),
+                name: authText(r.name || r.studentName || r.student_name || r['Student Name']),
+                classGroup: authText(r.classGroup || r.class_group || r.class || r['Class'])
+            };
+        }
+
+        function normalizeTeacherAuthRecord(record) {
+            const r = record || {};
+            return {
+                ...r,
+                id: authText(r.id || r.staffId || r.staffID || r.staff_id || r['Staff ID']),
+                username: authText(r.username || r.userName || r.user_name || r['Username']),
+                passcode: authText(r.passcode || r.passCode || r.password || r.PASSCODE || r['Passcode']),
+                name: authText(r.name || r.teacherName || r.teacher_name || r['Teacher Name']),
+                assignedClass: authText(r.assignedClass || r.assigned_class || r.class || r['Assigned Class'])
+            };
+        }
+
         function attachLoginListeners() {
             document.getElementById('form-student-login').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const inputUser = document.getElementById('stu-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('stu-passcode').value.trim();
 
-                let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-                let student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
+                let students = (JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]') || []).map(normalizeStudentAuthRecord);
+                const findStudent = list => list.find(s =>
+                    (authText(s.username).toLowerCase() === inputUser || authText(s.id).toLowerCase() === inputUser) &&
+                    authText(s.passcode) === passcode
+                );
+                let student = findStudent(students);
 
-                // If not found locally and cloud URL is configured, fetch latest cloud roster first
+                // If not found locally and cloud URL is configured, fetch latest cloud roster first.
                 if (!student && getCloudSyncUrl() && navigator.onLine) {
                     await pullFromCloud(false);
-                    students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-                    student = students.find(s => (s.username.toLowerCase() === inputUser || s.id.toLowerCase() === inputUser) && s.passcode === passcode);
+                    students = (JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]') || []).map(normalizeStudentAuthRecord);
+                    student = findStudent(students);
                 }
 
                 if (student) {
@@ -850,13 +1020,17 @@
                 const inputUser = document.getElementById('tch-username').value.trim().toLowerCase();
                 const passcode = document.getElementById('tch-passcode').value.trim();
 
-                let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-                let teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
+                let teachers = (JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]') || []).map(normalizeTeacherAuthRecord);
+                const findTeacher = list => list.find(t =>
+                    (authText(t.username).toLowerCase() === inputUser || authText(t.id).toLowerCase() === inputUser) &&
+                    authText(t.passcode) === passcode
+                );
+                let teacher = findTeacher(teachers);
 
                 if (!teacher && getCloudSyncUrl() && navigator.onLine) {
                     await pullFromCloud(false);
-                    teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-                    teacher = teachers.find(t => (t.username.toLowerCase() === inputUser || t.id.toLowerCase() === inputUser) && t.passcode === passcode);
+                    teachers = (JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]') || []).map(normalizeTeacherAuthRecord);
+                    teacher = findTeacher(teachers);
                 }
 
                 if (teacher) {
@@ -870,12 +1044,9 @@
 
             document.getElementById('form-admin-login').addEventListener('submit', (e) => {
                 e.preventDefault();
-                const pass = document.getElementById('admin-pass').value;
-                const settings = getSettings();
-                const adminPasscodeIsSet = Boolean(settings.adminPasscode);
-                const validPasscode = adminPasscodeIsSet
-                    ? pass === settings.adminPasscode
-                    : (pass === 'admin123' || pass === 'admin');
+                const pass = document.getElementById('admin-pass').value.trim();
+                const configuredPasscode = getAdminPasscode();
+                const validPasscode = pass.length > 0 && pass === configuredPasscode;
 
                 if (validPasscode) {
                     localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify({ role: 'admin', id: 'ADM-01', name: 'HoD', assignedClass: 'All Classes' }));
@@ -1115,8 +1286,8 @@
                                         <input type="number" id="qz-time" value="10" min="1" max="180" class="w-full px-3 py-2 border rounded-lg text-sm">
                                     </div>
                                     <div class="sm:col-span-3">
-                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Multiple Classes or Year Groups (use Ctrl/Command to select several)</label>
-                                        <select id="qz-class" multiple size="8" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Target Class or Year Group</label>
+                                        <select id="qz-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                             ${generateClassOptions()}
                                         </select>
                                     </div>
@@ -1306,8 +1477,8 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Multiple Classes or Year Groups (use Ctrl/Command to select several)</label>
-                                    <select id="mat-class" multiple size="8" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Target Class or Year Group</label>
+                                    <select id="mat-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                         ${generateClassOptions(user.assignedClass && user.assignedClass !== 'All Classes' ? user.assignedClass : 'All Classes')}
                                     </select>
                                 </div>
@@ -1796,7 +1967,6 @@
         }
 
         function deleteGradebookEntry(attemptId) {
-            if (!confirmRemoval(`gradebook entry ${attemptId}`)) return;
             let attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
             attempts = attempts.filter(a => a.id !== attemptId);
             saveTableAndSync('QUIZ_ATTEMPTS', attempts);
@@ -1901,7 +2071,6 @@
         }
 
         function resetDefaultLogo() {
-            if (!confirmRemoval('the current school logo and restore the default crest')) return;
             const user = getCurrentUser();
             if (!user || user.role !== 'admin') {
                 showToast('Access Denied', 'Only the HOD / Super Admin can reset the school logo.', true);
@@ -1915,8 +2084,6 @@
         }
 
         function deleteTeacher(id) {
-            const teacherRecord = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]').find(t => t.id === id);
-            if (!teacherRecord || !confirmRecordId(`teacher ${teacherRecord.name}`, id)) return;
             const user = getCurrentUser();
             if (!user || user.role !== 'admin') return;
             let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
@@ -1978,66 +2145,29 @@
             document.getElementById('admin-students-tbody').innerHTML = renderStudentRowsHTML(filtered);
         }
 
-        // no-cors POST responses are opaque; verify roster persistence with a read-after-write.
-        async function syncPendingRosterToCloud() {
-            const url = getCloudSyncUrl();
-            let roster;
-            try { roster = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]'); } catch (e) { return false; }
-            if (!url || !navigator.onLine) return false;
-            try {
-                await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'SYNC_TABLE', table: 'STUDENTS', records: roster }) });
-                const response = await fetch(url + '?t=' + Date.now());
-                if (!response.ok) return false;
-                const result = await response.json();
-                const cloudRoster = result && result.status === 'success' && result.data ? result.data.STUDENTS : null;
-                if (!Array.isArray(cloudRoster)) return false;
-                const cloudIds = new Set(cloudRoster.map(x => String(x.id || '').trim().toUpperCase()));
-                if (!roster.every(x => cloudIds.has(String(x.id || '').trim().toUpperCase()))) return false;
-                localStorage.removeItem(DB_KEYS.ROSTER_PENDING);
-                return true;
-            } catch (e) { return false; }
-        }
-
-        async function bulkGenerateStudents() {
+        function bulkGenerateStudents() {
             const classGroup = document.getElementById('bulk-stu-class').value;
             const rawNames = document.getElementById('bulk-stu-names').value.trim();
-            if (!rawNames) { showToast('Empty List', 'Please paste at least one student name.', true); return; }
-            if (!classGroup) { showToast('Select Class', 'Please select the class for this roster.', true); return; }
-            const lines = rawNames.split(/\r?\n/).map(n => n.trim()).filter(Boolean);
-            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-            const existingIds = new Set(students.map(x => String(x.id || '').toUpperCase()));
-            const imported = [];
-            lines.forEach(name => {
-                let id; do { id = 'ANASS-' + Math.floor(1000 + Math.random() * 9000); } while (existingIds.has(id));
-                existingIds.add(id);
-                const base = name.toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, '') || 'student';
-                let username;
-                do { username = base + Math.floor(10 + Math.random() * 90); }
-                while (students.some(x => String(x.username || '').toLowerCase() === username.toLowerCase()) || imported.some(x => x.username.toLowerCase() === username.toLowerCase()));
-                imported.push({ id, name, username, passcode: Math.floor(1000 + Math.random() * 9000).toString(), classGroup });
-            });
-            const updated = [...imported, ...students];
-            // Commit locally first; a failed cloud request must not lose the roster on refresh.
-            localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(updated));
-            localStorage.setItem(DB_KEYS.ROSTER_PENDING, 'true');
-            localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
-            const verified = await syncPendingRosterToCloud();
-            if (verified) {
-                localStorage.removeItem(DB_KEYS.PENDING_SYNC);
-                setCloudBadgeStatus('synced', 'Roster Saved & Verified');
-                showToast('Roster Imported & Verified', `${imported.length} student(s) verified in Google Sheets for ${classGroup}.`);
-            } else {
-                setCloudBadgeStatus('pending', 'Roster Saved Locally — Cloud Pending');
-                showToast('Roster Saved Locally', `${imported.length} student(s) are saved on this device. Cloud storage could not be verified; the local roster will be protected and retried.`, true);
+            if (!rawNames) {
+                showToast('Empty List', 'Please paste at least one student name.', true);
+                return;
             }
-            const box = document.getElementById('bulk-stu-names'); if (box) box.value = '';
+            const lines = rawNames.split('\n').map(n => n.trim()).filter(Boolean);
+            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+
+            lines.forEach(name => {
+                const id = 'ANASS-' + Math.floor(1000 + Math.random() * 9000);
+                const username = name.toLowerCase().split(' ')[0].replace(/[^a-z]/g, '') + Math.floor(10 + Math.random() * 89);
+                const passcode = Math.floor(1000 + Math.random() * 9000).toString();
+                students.unshift({ id, name, username, passcode, classGroup });
+            });
+
+            saveTableAndSync('STUDENTS', students);
+            showToast('Bulk Import Synced', `Generated ANASS credentials for ${lines.length} student(s) in ${classGroup}.`);
             renderApp('students');
         }
 
         function deleteStudent(id) {
-            const studentRecord = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]').find(s => s.id === id);
-            if (!studentRecord || !confirmRecordId(`student ${studentRecord.name}`, id)) return;
             let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
             students = students.filter(s => s.id !== id);
             saveTableAndSync('STUDENTS', students);
@@ -2046,7 +2176,6 @@
         }
 
         function deleteMaterial(id) {
-            if (!confirmRemoval(`learning material / assignment ${id}`)) return;
             let materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
             materials = materials.filter(m => m.id !== id);
             saveTableAndSync('MATERIALS', materials);
@@ -2089,7 +2218,6 @@
         }
 
         function deleteSubmission(id) {
-            if (!confirmRemoval(`student submission ${id}`)) return;
             let submissions = JSON.parse(localStorage.getItem(DB_KEYS.SUBMISSIONS) || '[]');
             submissions = submissions.filter(s => s.id !== id);
             saveTableAndSync('SUBMISSIONS', submissions);
@@ -2098,7 +2226,6 @@
         }
 
         function deleteAnnouncement(id) {
-            if (!confirmRemoval(`announcement ${id}`)) return;
             let announcements = JSON.parse(localStorage.getItem(DB_KEYS.ANNOUNCEMENTS) || '[]');
             announcements = announcements.filter(a => a.id !== id);
             saveTableAndSync('ANNOUNCEMENTS', announcements);
@@ -2107,7 +2234,6 @@
         }
 
         function deleteTimetable(id) {
-            if (!confirmRemoval(`timetable entry ${id}`)) return;
             let timetable = JSON.parse(localStorage.getItem(DB_KEYS.TIMETABLE) || '[]');
             timetable = timetable.filter(t => t.id !== id);
             saveTableAndSync('TIMETABLE', timetable);
@@ -2156,7 +2282,6 @@
         }
 
         function removeBuilderQuestion(idx) {
-            if (!confirmRemoval(`draft question ${idx + 1}`)) return;
             builderQuestions.splice(idx, 1);
             document.getElementById('builder-q-count').innerText = builderQuestions.length;
             document.getElementById('builder-questions-list').innerHTML = renderBuilderQuestionsPreview();
@@ -2165,10 +2290,9 @@
         function publishNativeQuiz() {
             const title = document.getElementById('qz-title').value.trim();
             const timeLimit = parseInt(document.getElementById('qz-time').value, 10) || 10;
-            const classGroup = Array.from(document.getElementById('qz-class').selectedOptions).map(o => o.value);
+            const classGroup = document.getElementById('qz-class').value;
             const user = getCurrentUser();
 
-            if (!classGroup.length) { showToast('Select Classes', 'Select at least one class for this quiz.', true); return; }
             if (!title) {
                 showToast('Missing Quiz Title', 'Please enter a title for the quiz.', true);
                 return;
@@ -2196,7 +2320,6 @@
         }
 
         function deleteQuiz(id) {
-            if (!confirmRemoval(`quiz ${id}`)) return;
             let quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]');
             quizzes = quizzes.filter(q => q.id !== id);
             saveTableAndSync('QUIZZES', quizzes);
@@ -2290,10 +2413,9 @@
                     e.preventDefault();
                     const title = document.getElementById('mat-title').value.trim();
                     const category = document.getElementById('mat-category').value;
-                    const classGroup = Array.from(document.getElementById('mat-class').selectedOptions).map(o => o.value);
+                    const classGroup = document.getElementById('mat-class').value;
                     const url = document.getElementById('mat-url').value.trim();
                     const description = document.getElementById('mat-desc').value.trim();
-                    if (!classGroup.length) { showToast('Select Classes', 'Select at least one class for this resource or assignment.', true); return; }
                     const isGradable = document.getElementById('mat-gradable').checked;
                     const maxScore = parseInt(document.getElementById('mat-max-score').value, 10) || 20;
 
@@ -3090,10 +3212,6 @@
             initDatabase();
             renderApp();
             if (getCloudSyncUrl()) {
-                if (localStorage.getItem(DB_KEYS.ROSTER_PENDING) === 'true') {
-                    const verified = await syncPendingRosterToCloud();
-                    if (verified) localStorage.removeItem(DB_KEYS.PENDING_SYNC);
-                }
                 await pullFromCloud(false);
             } else {
                 setCloudBadgeStatus('local', 'Local Mode');
