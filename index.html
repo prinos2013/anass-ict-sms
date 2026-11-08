@@ -659,99 +659,70 @@
             });
         }
 
-        function passcodeText(value) {
-            return value === null || value === undefined ? '' : String(value).trim();
-        }
-
-        function findAccountById(records, id, role) {
-            const wanted = passcodeText(id).toLowerCase();
-            return (records || []).find(record => {
-                const r = record || {};
-                const recordId = role === 'student'
-                    ? (r.id || r.studentId || r.student_id || r.studentID || r['Student ID'])
-                    : (r.id || r.staffId || r.staff_id || r.staffID || r['Staff ID']);
-                return passcodeText(recordId).toLowerCase() === wanted;
-            });
-        }
-
-        async function saveProfilePasscodeChange() {
+        function saveProfilePasscodeChange() {
             const user = getCurrentUser();
             if (!user) return;
 
-            const currPass = passcodeText(document.getElementById('sec-curr-pass')?.value);
-            const newPass = passcodeText(document.getElementById('sec-new-pass')?.value);
-            const confPass = passcodeText(document.getElementById('sec-conf-pass')?.value);
+            const currPass = (document.getElementById('sec-curr-pass').value || '').trim();
+            const newPass = (document.getElementById('sec-new-pass').value || '').trim();
+            const confPass = (document.getElementById('sec-conf-pass').value || '').trim();
 
             if (!currPass || !newPass || !confPass) {
                 showToast('Missing Fields', 'Please fill in all passcode fields.', true);
                 return;
             }
+
             if (newPass.length < 4) {
                 showToast('Passcode Too Short', 'New passcode must be at least 4 characters.', true);
                 return;
             }
+
             if (newPass !== confPass) {
                 showToast('Mismatch', 'New passcode and confirmation do not match.', true);
                 return;
             }
 
-            if (user.role === 'student' || user.role === 'teacher') {
-                const isStudent = user.role === 'student';
-                const table = isStudent ? 'STUDENTS' : 'TEACHERS';
-                const key = isStudent ? DB_KEYS.STUDENTS : DB_KEYS.TEACHERS;
-                const records = JSON.parse(localStorage.getItem(key) || '[]') || [];
-                const account = findAccountById(records, user.id, user.role);
-
-                if (!account) {
-                    showToast('Account Not Found', 'Your account could not be found in the loaded roster. Synchronize the portal and try again.', true);
+            if (user.role === 'student') {
+                const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+                const stu = students.find(s => s.id === user.id);
+                if (!stu || stu.passcode !== currPass) {
+                    showToast('Incorrect Passcode', 'Your current passcode is incorrect.', true);
                     return;
                 }
-
-                const storedPass = passcodeText(
-                    account.passcode ?? account.passCode ?? account.password ??
-                    account.PASSCODE ?? account['Passcode'] ?? account['Password']
-                );
-                if (storedPass !== currPass) {
-                    showToast('Current Passcode Not Matched', 'The entered passcode does not match the passcode stored for this account. Check that the latest roster has synchronized.', true);
-                    return;
-                }
-
-                account.passcode = newPass;
+                stu.passcode = newPass;
                 user.passcode = newPass;
-                localStorage.setItem(key, JSON.stringify(records));
                 localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
-
-                const syncResult = await saveTableAndSync(table, records);
+                saveTableAndSync('STUDENTS', students);
                 closeModal();
-                if (syncResult) {
-                    showToast('Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
-                } else {
-                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
+                showToast('Passcode Updated & Synced!', 'Your new student login passcode has been saved to the cloud.');
+            } else if (user.role === 'teacher') {
+                const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+                const tch = teachers.find(t => t.id === user.id);
+                if (!tch || tch.passcode !== currPass) {
+                    showToast('Incorrect Passcode', 'Your current staff passcode is incorrect.', true);
+                    return;
                 }
-                return;
-            }
-
-            if (user.role === 'admin') {
+                tch.passcode = newPass;
+                user.passcode = newPass;
+                localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+                saveTableAndSync('TEACHERS', teachers);
+                closeModal();
+                showToast('Staff Passcode Synced!', 'Your new teacher login passcode has been saved to the cloud.');
+            } else if (user.role === 'admin') {
                 const settings = getSettings();
-                const currentAdminPasscode = passcodeText(
-                    settings.adminPasscode ?? settings.admin_passcode ??
-                    settings.ADMIN_PASSCODE ?? settings.hodPasscode ?? settings.hod_passcode
-                ) || 'admin123';
+                const currentAdminPasscode = settings.adminPasscode || 'admin123';
+                const legacyDefaultAccepted = !settings.adminPasscode && currPass === 'admin';
 
-                if (currPass !== currentAdminPasscode) {
-                    showToast('Current Passcode Not Matched', 'The entered current HoD/Admin passcode does not match the passcode saved in portal settings.', true);
+                if (currPass !== currentAdminPasscode && !legacyDefaultAccepted) {
+                    showToast('Incorrect Passcode', 'Your current HOD/Admin passcode is incorrect.', true);
                     return;
                 }
 
                 settings.adminPasscode = newPass;
                 localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(settings));
-                const syncResult = await saveTableAndSync('SETTINGS', settings);
+                saveTableAndSync('SETTINGS', settings);
                 closeModal();
-                if (syncResult) {
-                    showToast('HoD/Admin Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
-                } else {
-                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
-                }
+                showToast('HOD/Admin Passcode Updated', 'Your new passcode has been saved. Cloud synchronization will follow the existing sync settings.');
             }
         }
 
@@ -1316,9 +1287,10 @@
                                     </div>
                                     <div class="sm:col-span-3">
                                         <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Target Class or Year Group</label>
-                                        <select id="qz-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                        <select id="qz-class" multiple size="6" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                             ${generateClassOptions()}
                                         </select>
+                                        <p class="text-xs text-slate-500 mt-1">Select multiple classes using Ctrl (Windows) or Command (Mac).</p>
                                     </div>
                                 </div>
 
@@ -2115,10 +2087,14 @@
         function deleteTeacher(id) {
             const user = getCurrentUser();
             if (!user || user.role !== 'admin') return;
-            let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-            teachers = teachers.filter(t => t.id !== id);
-            saveTableAndSync('TEACHERS', teachers);
-            showToast('Staff Removed', 'Teacher account removed and synced.');
+            const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+            const target = teachers.find(t => String(t.id) === String(id));
+            if (!target) { showToast('Teacher Not Found', 'Teacher record not found.', true); return; }
+            const typed = prompt(`Do you want to remove ${target.name || 'this teacher'}? Enter Staff ID ${target.id} to confirm:`);
+            if (typed === null) return;
+            if (typed.trim() !== String(target.id)) { showToast('ID Not Matched', 'Teacher was not removed.', true); return; }
+            saveTableAndSync('TEACHERS', teachers.filter(t => String(t.id) !== String(id)));
+            showToast('Staff Removed', `${target.name || target.id} was removed.`);
             renderApp('settings');
         }
 
@@ -2197,15 +2173,22 @@
         }
 
         function deleteStudent(id) {
-            let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-            students = students.filter(s => s.id !== id);
-            saveTableAndSync('STUDENTS', students);
-            showToast('Student Removed', 'Student record deleted and synced.');
+            const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+            const target = students.find(s => String(s.id) === String(id));
+            if (!target) { showToast('Student Not Found', 'Student record not found.', true); return; }
+            const typed = prompt(`Do you want to remove ${target.name || 'this student'}? Enter Student ID ${target.id} to confirm:`);
+            if (typed === null) return;
+            if (typed.trim() !== String(target.id)) { showToast('ID Not Matched', 'Student was not removed.', true); return; }
+            saveTableAndSync('STUDENTS', students.filter(s => String(s.id) !== String(id)));
+            showToast('Student Removed', `${target.name || target.id} was removed.`);
             renderApp('students');
         }
 
         function deleteMaterial(id) {
             let materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
+            const target = materials.find(m => String(m.id) === String(id));
+            if (!target) return;
+            if (!confirm(`Do you want to remove the material "${target.title || id}"?`)) return;
             materials = materials.filter(m => m.id !== id);
             saveTableAndSync('MATERIALS', materials);
             showToast('Material Removed', 'Resource removed from hub and synced.');
@@ -2247,6 +2230,7 @@
         }
 
         function deleteSubmission(id) {
+            if (!confirm('Do you want to remove this submission?')) return;
             let submissions = JSON.parse(localStorage.getItem(DB_KEYS.SUBMISSIONS) || '[]');
             submissions = submissions.filter(s => s.id !== id);
             saveTableAndSync('SUBMISSIONS', submissions);
@@ -2255,6 +2239,7 @@
         }
 
         function deleteAnnouncement(id) {
+            if (!confirm('Do you want to remove this announcement?')) return;
             let announcements = JSON.parse(localStorage.getItem(DB_KEYS.ANNOUNCEMENTS) || '[]');
             announcements = announcements.filter(a => a.id !== id);
             saveTableAndSync('ANNOUNCEMENTS', announcements);
@@ -2319,11 +2304,15 @@
         function publishNativeQuiz() {
             const title = document.getElementById('qz-title').value.trim();
             const timeLimit = parseInt(document.getElementById('qz-time').value, 10) || 10;
-            const classGroup = document.getElementById('qz-class').value;
+            const classGroups = Array.from(document.getElementById('qz-class').selectedOptions).map(o => o.value).filter(Boolean);
             const user = getCurrentUser();
 
             if (!title) {
                 showToast('Missing Quiz Title', 'Please enter a title for the quiz.', true);
+                return;
+            }
+            if (!classGroups.length) {
+                showToast('Select Classes', 'Please select at least one target class.', true);
                 return;
             }
             if (builderQuestions.length === 0) {
@@ -2335,7 +2324,8 @@
             quizzes.unshift({
                 id: genId('QUIZ'),
                 title,
-                classGroup,
+                classGroup: classGroups[0],
+                classGroups,
                 timeLimit,
                 author: user ? user.name : 'ICT Department',
                 date: new Date().toISOString().split('T')[0],
@@ -2344,12 +2334,15 @@
 
             saveTableAndSync('QUIZZES', quizzes);
             builderQuestions = [];
-            showToast('Quiz Published & Synced!', `"${title}" is now live for ${classGroup}.`);
+            showToast('Quiz Published & Synced!', `"${title}" is now live for ${classGroups.join(", ")}.`);
             renderApp('quizzes');
         }
 
         function deleteQuiz(id) {
             let quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]');
+            const target = quizzes.find(q => String(q.id) === String(id));
+            if (!target) return;
+            if (!confirm(`Do you want to remove the quiz "${target.title || id}"?`)) return;
             quizzes = quizzes.filter(q => q.id !== id);
             saveTableAndSync('QUIZZES', quizzes);
             showToast('Quiz Deleted', 'Quiz removed from portal.');
