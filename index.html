@@ -574,7 +574,19 @@
             return options;
         }
 
+        function getSelectedClassTargets(selectId) {
+            const el = document.getElementById(selectId);
+            if (!el) return [];
+            const values = Array.from(el.selectedOptions).map(o => o.value).filter(Boolean);
+            return values.length ? values : [];
+        }
+
+        function classTargetLabel(target) {
+            return Array.isArray(target) ? target.join(', ') : String(target || '');
+        }
+
         function isAssignedToStudent(targetGroup, studentClass) {
+            if (Array.isArray(targetGroup)) return targetGroup.some(group => isAssignedToStudent(group, studentClass));
             if (!studentClass) return false;
             if (targetGroup === 'All Classes') return true;
             if (targetGroup === studentClass) return true;
@@ -695,83 +707,66 @@
                 return;
             }
 
-            const readPasscode = record => {
-                const r = record || {};
-                const fields = ['passcode', 'passCode', 'password', 'PASSCODE', 'Passcode', 'Password', 'studentPasscode', 'teacherPasscode', 'loginPasscode'];
-                for (const field of fields) {
-                    if (r[field] !== undefined && r[field] !== null && String(r[field]).trim() !== '') return String(r[field]).trim();
-                }
-                return '';
-            };
-            const matchesCurrent = (record, signedInUser) => {
-                const candidates = [readPasscode(record), readPasscode(signedInUser)];
-                return candidates.some(value => value !== '' && value === currPass);
-            };
-            const setPasscodeFields = (record, value) => {
-                // Write the canonical field and update any legacy aliases already present.
-                record.passcode = value;
-                ['passCode', 'password', 'PASSCODE', 'Passcode', 'Password', 'studentPasscode', 'teacherPasscode', 'loginPasscode'].forEach(field => {
-                    if (Object.prototype.hasOwnProperty.call(record, field)) record[field] = value;
-                });
-            };
-
             if (user.role === 'student' || user.role === 'teacher') {
                 const isStudent = user.role === 'student';
                 const table = isStudent ? 'STUDENTS' : 'TEACHERS';
                 const key = isStudent ? DB_KEYS.STUDENTS : DB_KEYS.TEACHERS;
-                let records = JSON.parse(localStorage.getItem(key) || '[]') || [];
-                if (!Array.isArray(records)) records = [];
-                let account = findAccountById(records, user.id, user.role);
+                const records = JSON.parse(localStorage.getItem(key) || '[]') || [];
+                const account = findAccountById(records, user.id, user.role);
 
-                // The signed-in profile is also a valid local credential snapshot. This
-                // handles roster records whose passcode uses a legacy column name.
-                if (!account && readPasscode(user)) {
-                    account = { ...user };
-                    records.push(account);
-                }
                 if (!account) {
-                    showToast('Account Not Found', 'Your account could not be found. Please sign out, synchronize the portal, and sign in again.', true);
-                    return;
-                }
-                if (!matchesCurrent(account, user)) {
-                    showToast('Current Passcode Not Matched', 'The current passcode does not match the signed-in account or its saved roster record. Please synchronize and sign in again before changing it.', true);
+                    showToast('Account Not Found', 'Your account could not be found in the loaded roster. Synchronize the portal and try again.', true);
                     return;
                 }
 
-                setPasscodeFields(account, newPass);
-                setPasscodeFields(user, newPass);
+                const storedPass = passcodeText(
+                    account.passcode ?? account.passCode ?? account.password ?? account.PASSCODE ?? account['Passcode'] ?? account['Password'] ?? account.studentPasscode ?? account.teacherPasscode ?? account.loginPasscode ?? user.passcode ?? user.password
+                );
+                if (storedPass !== currPass) {
+                    showToast('Current Passcode Not Matched', 'The entered passcode does not match the passcode stored for this account. Check that the latest roster has synchronized.', true);
+                    return;
+                }
+
+                account.passcode = newPass;
+                ['passCode','password','PASSCODE','Passcode','Password','studentPasscode','teacherPasscode','loginPasscode'].forEach(k => { if (Object.prototype.hasOwnProperty.call(account, k)) account[k] = newPass; });
+                user.passcode = newPass;
+                user.password = newPass;
                 localStorage.setItem(key, JSON.stringify(records));
                 localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+
                 const syncResult = await saveTableAndSync(table, records);
                 closeModal();
-                if (syncResult) showToast('Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
-                else showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending. Synchronize before using another device.', true);
+                if (syncResult) {
+                    showToast('Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
+                } else {
+                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
+                }
                 return;
             }
 
             if (user.role === 'admin') {
                 const settings = getSettings();
                 const currentAdminPasscode = passcodeText(
-                    settings.adminPasscode ?? settings.admin_passcode ?? settings.ADMIN_PASSCODE ??
-                    settings.hodPasscode ?? settings.hod_passcode ?? settings.password
+                    settings.adminPasscode ?? settings.admin_passcode ?? settings.ADMIN_PASSCODE ?? settings.hodPasscode ?? settings.hod_passcode ?? settings.password ?? user.passcode ?? user.password
                 ) || 'admin123';
-                const signedInPasscode = readPasscode(user);
-                if (currPass !== currentAdminPasscode && currPass !== signedInPasscode) {
-                    showToast('Current Passcode Not Matched', 'The current passcode does not match the saved HoD/Admin settings. Please synchronize the portal and sign in again.', true);
+
+                if (currPass !== currentAdminPasscode) {
+                    showToast('Current Passcode Not Matched', 'The entered current HoD/Admin passcode does not match the passcode saved in portal settings.', true);
                     return;
                 }
 
                 settings.adminPasscode = newPass;
-                ['admin_passcode', 'ADMIN_PASSCODE', 'hodPasscode', 'hod_passcode', 'password'].forEach(field => {
-                    if (Object.prototype.hasOwnProperty.call(settings, field)) settings[field] = newPass;
-                });
-                user.passcode = newPass;
-                localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(settings));
+                ['admin_passcode','ADMIN_PASSCODE','hodPasscode','hod_passcode','password'].forEach(k => { if (Object.prototype.hasOwnProperty.call(settings, k)) settings[k] = newPass; });
+                user.passcode = newPass; user.password = newPass;
                 localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+                localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(settings));
                 const syncResult = await saveTableAndSync('SETTINGS', settings);
                 closeModal();
-                if (syncResult) showToast('HoD/Admin Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
-                else showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending. Synchronize before using another device.', true);
+                if (syncResult) {
+                    showToast('HoD/Admin Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
+                } else {
+                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
+                }
             }
         }
 
@@ -1335,8 +1330,8 @@
                                         <input type="number" id="qz-time" value="10" min="1" max="180" class="w-full px-3 py-2 border rounded-lg text-sm">
                                     </div>
                                     <div class="sm:col-span-3">
-                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Target Class or Year Group</label>
-                                        <select id="qz-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                        <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Assign to Classes (select multiple; use Ctrl/Command to choose several)</label>
+                                        <select id="qz-class" multiple size="8" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                             ${generateClassOptions()}
                                         </select>
                                     </div>
@@ -1526,8 +1521,8 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Target Class or Year Group</label>
-                                    <select id="mat-class" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+                                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">Target Classes (select multiple; use Ctrl/Command to choose several)</label>
+                                    <select id="mat-class" multiple size="8" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
                                         ${generateClassOptions(user.assignedClass && user.assignedClass !== 'All Classes' ? user.assignedClass : 'All Classes')}
                                     </select>
                                 </div>
@@ -2016,6 +2011,7 @@
         }
 
         function deleteGradebookEntry(attemptId) {
+            if (!confirmDeleteAction('this gradebook entry')) return;
             let attempts = JSON.parse(localStorage.getItem(DB_KEYS.QUIZ_ATTEMPTS) || '[]');
             attempts = attempts.filter(a => a.id !== attemptId);
             saveTableAndSync('QUIZ_ATTEMPTS', attempts);
@@ -2125,6 +2121,7 @@
                 showToast('Access Denied', 'Only the HOD / Super Admin can reset the school logo.', true);
                 return;
             }
+            if (!confirmDeleteAction('the current school logo and restore the default crest')) return;
             const s = getSettings();
             s.logoUrl = '';
             saveTableAndSync('SETTINGS', s);
@@ -2132,12 +2129,29 @@
             renderApp('settings');
         }
 
+
+        function confirmDeleteById(entityLabel, recordId) {
+            const entered = window.prompt(`Confirm removal of this ${entityLabel}. Enter the exact ID (${recordId}) to continue:`);
+            if (entered === null) return false;
+            if (String(entered).trim().toLowerCase() !== String(recordId).trim().toLowerCase()) {
+                showToast('ID Not Matched', 'The ID entered does not match. Nothing was removed.', true);
+                return false;
+            }
+            return window.confirm(`Do you want to remove ${entityLabel} ${recordId}? This action cannot be undone.`);
+        }
+
+        function confirmDeleteAction(description) {
+            return window.confirm(`Do you want to remove ${description}? This action cannot be undone.`);
+        }
+
         function deleteTeacher(id) {
             const user = getCurrentUser();
             if (!user || user.role !== 'admin') return;
-            let teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-            teachers = teachers.filter(t => t.id !== id);
-            saveTableAndSync('TEACHERS', teachers);
+            const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
+            const target = teachers.find(t => t.id === id);
+            if (!target || !confirmDeleteById('teacher account', target.id)) return;
+            const remainingTeachers = teachers.filter(t => t.id !== id);
+            saveTableAndSync('TEACHERS', remainingTeachers);
             showToast('Staff Removed', 'Teacher account removed and synced.');
             renderApp('settings');
         }
@@ -2218,6 +2232,8 @@
 
         function deleteStudent(id) {
             let students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
+            const target = students.find(s => s.id === id);
+            if (!target || !confirmDeleteById('student record', target.id)) return;
             students = students.filter(s => s.id !== id);
             saveTableAndSync('STUDENTS', students);
             showToast('Student Removed', 'Student record deleted and synced.');
@@ -2225,6 +2241,7 @@
         }
 
         function deleteMaterial(id) {
+            if (!confirmDeleteAction('this learning material or assignment')) return;
             let materials = JSON.parse(localStorage.getItem(DB_KEYS.MATERIALS) || '[]');
             materials = materials.filter(m => m.id !== id);
             saveTableAndSync('MATERIALS', materials);
@@ -2267,6 +2284,7 @@
         }
 
         function deleteSubmission(id) {
+            if (!confirmDeleteAction('this project submission')) return;
             let submissions = JSON.parse(localStorage.getItem(DB_KEYS.SUBMISSIONS) || '[]');
             submissions = submissions.filter(s => s.id !== id);
             saveTableAndSync('SUBMISSIONS', submissions);
@@ -2275,6 +2293,7 @@
         }
 
         function deleteAnnouncement(id) {
+            if (!confirmDeleteAction('this announcement')) return;
             let announcements = JSON.parse(localStorage.getItem(DB_KEYS.ANNOUNCEMENTS) || '[]');
             announcements = announcements.filter(a => a.id !== id);
             saveTableAndSync('ANNOUNCEMENTS', announcements);
@@ -2283,6 +2302,7 @@
         }
 
         function deleteTimetable(id) {
+            if (!confirmDeleteAction('this timetable entry')) return;
             let timetable = JSON.parse(localStorage.getItem(DB_KEYS.TIMETABLE) || '[]');
             timetable = timetable.filter(t => t.id !== id);
             saveTableAndSync('TIMETABLE', timetable);
@@ -2331,6 +2351,7 @@
         }
 
         function removeBuilderQuestion(idx) {
+            if (!confirmDeleteAction('this question from the quiz draft')) return;
             builderQuestions.splice(idx, 1);
             document.getElementById('builder-q-count').innerText = builderQuestions.length;
             document.getElementById('builder-questions-list').innerHTML = renderBuilderQuestionsPreview();
@@ -2339,9 +2360,11 @@
         function publishNativeQuiz() {
             const title = document.getElementById('qz-title').value.trim();
             const timeLimit = parseInt(document.getElementById('qz-time').value, 10) || 10;
-            const classGroup = document.getElementById('qz-class').value;
+            const classGroups = getSelectedClassTargets('qz-class');
+            const classGroup = classGroups.length === 1 ? classGroups[0] : classGroups;
             const user = getCurrentUser();
 
+            if (!classGroups.length) { showToast('Select Classes', 'Choose at least one class for this quiz.', true); return; }
             if (!title) {
                 showToast('Missing Quiz Title', 'Please enter a title for the quiz.', true);
                 return;
@@ -2356,6 +2379,7 @@
                 id: genId('QUIZ'),
                 title,
                 classGroup,
+                classGroups,
                 timeLimit,
                 author: user ? user.name : 'ICT Department',
                 date: new Date().toISOString().split('T')[0],
@@ -2364,11 +2388,12 @@
 
             saveTableAndSync('QUIZZES', quizzes);
             builderQuestions = [];
-            showToast('Quiz Published & Synced!', `"${title}" is now live for ${classGroup}.`);
+            showToast('Quiz Published & Synced!', `"${title}" is now live for ${classTargetLabel(classGroup)}.`);
             renderApp('quizzes');
         }
 
         function deleteQuiz(id) {
+            if (!confirmDeleteAction('this quiz')) return;
             let quizzes = JSON.parse(localStorage.getItem(DB_KEYS.QUIZZES) || '[]');
             quizzes = quizzes.filter(q => q.id !== id);
             saveTableAndSync('QUIZZES', quizzes);
@@ -2461,8 +2486,10 @@
                 addMatForm.addEventListener('submit', (e) => {
                     e.preventDefault();
                     const title = document.getElementById('mat-title').value.trim();
+                    const classGroups = getSelectedClassTargets('mat-class');
+                    if (!classGroups.length) { showToast('Select Classes', 'Choose at least one class for this material/assignment.', true); return; }
                     const category = document.getElementById('mat-category').value;
-                    const classGroup = document.getElementById('mat-class').value;
+                    const classGroup = classGroups.length === 1 ? classGroups[0] : classGroups;
                     const url = document.getElementById('mat-url').value.trim();
                     const description = document.getElementById('mat-desc').value.trim();
                     const isGradable = document.getElementById('mat-gradable').checked;
@@ -2474,6 +2501,7 @@
                         title,
                         category,
                         classGroup,
+                        classGroups,
                         url,
                         description,
                         isGradable,
