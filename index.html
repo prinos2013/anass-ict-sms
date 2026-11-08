@@ -101,7 +101,8 @@
             FAQS: 'anass_lms_faqs_v7',
             CURRENT_USER: 'anass_lms_current_user_v7',
             CLOUD_URL: 'anass_lms_cloud_url_v7',
-            PENDING_SYNC: 'anass_lms_pending_sync_v7'
+            PENDING_SYNC: 'anass_lms_pending_sync_v7',
+            ROSTER_PENDING: 'anass_lms_roster_pending_v1'
         };
 
         // Map internal DB_KEYS to Google Sheet Tab Names
@@ -253,6 +254,8 @@
                     let updatedAny = false;
                     Object.keys(TABLE_KEY_MAP).forEach(tableName => {
                         const cloudVal = json.data[tableName];
+                        // Protect a locally imported roster until its cloud copy is verified.
+                        if (tableName === 'STUDENTS' && localStorage.getItem(DB_KEYS.ROSTER_PENDING) === 'true') return;
                         if (cloudVal !== null && cloudVal !== undefined) {
                             // Preserve cloudSyncUrl if pulling SETTINGS
                             if (tableName === 'SETTINGS') {
@@ -1975,25 +1978,60 @@
             document.getElementById('admin-students-tbody').innerHTML = renderStudentRowsHTML(filtered);
         }
 
-        function bulkGenerateStudents() {
+        // no-cors POST responses are opaque; verify roster persistence with a read-after-write.
+        async function syncPendingRosterToCloud() {
+            const url = getCloudSyncUrl();
+            let roster;
+            try { roster = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]'); } catch (e) { return false; }
+            if (!url || !navigator.onLine) return false;
+            try {
+                await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify({ action: 'SYNC_TABLE', table: 'STUDENTS', records: roster }) });
+                const response = await fetch(url + '?t=' + Date.now());
+                if (!response.ok) return false;
+                const result = await response.json();
+                const cloudRoster = result && result.status === 'success' && result.data ? result.data.STUDENTS : null;
+                if (!Array.isArray(cloudRoster)) return false;
+                const cloudIds = new Set(cloudRoster.map(x => String(x.id || '').trim().toUpperCase()));
+                if (!roster.every(x => cloudIds.has(String(x.id || '').trim().toUpperCase()))) return false;
+                localStorage.removeItem(DB_KEYS.ROSTER_PENDING);
+                return true;
+            } catch (e) { return false; }
+        }
+
+        async function bulkGenerateStudents() {
             const classGroup = document.getElementById('bulk-stu-class').value;
             const rawNames = document.getElementById('bulk-stu-names').value.trim();
-            if (!rawNames) {
-                showToast('Empty List', 'Please paste at least one student name.', true);
-                return;
-            }
-            const lines = rawNames.split('\n').map(n => n.trim()).filter(Boolean);
+            if (!rawNames) { showToast('Empty List', 'Please paste at least one student name.', true); return; }
+            if (!classGroup) { showToast('Select Class', 'Please select the class for this roster.', true); return; }
+            const lines = rawNames.split(/\r?\n/).map(n => n.trim()).filter(Boolean);
             const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-
+            const existingIds = new Set(students.map(x => String(x.id || '').toUpperCase()));
+            const imported = [];
             lines.forEach(name => {
-                const id = 'ANASS-' + Math.floor(1000 + Math.random() * 9000);
-                const username = name.toLowerCase().split(' ')[0].replace(/[^a-z]/g, '') + Math.floor(10 + Math.random() * 89);
-                const passcode = Math.floor(1000 + Math.random() * 9000).toString();
-                students.unshift({ id, name, username, passcode, classGroup });
+                let id; do { id = 'ANASS-' + Math.floor(1000 + Math.random() * 9000); } while (existingIds.has(id));
+                existingIds.add(id);
+                const base = name.toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, '') || 'student';
+                let username;
+                do { username = base + Math.floor(10 + Math.random() * 90); }
+                while (students.some(x => String(x.username || '').toLowerCase() === username.toLowerCase()) || imported.some(x => x.username.toLowerCase() === username.toLowerCase()));
+                imported.push({ id, name, username, passcode: Math.floor(1000 + Math.random() * 9000).toString(), classGroup });
             });
-
-            saveTableAndSync('STUDENTS', students);
-            showToast('Bulk Import Synced', `Generated ANASS credentials for ${lines.length} student(s) in ${classGroup}.`);
+            const updated = [...imported, ...students];
+            // Commit locally first; a failed cloud request must not lose the roster on refresh.
+            localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(updated));
+            localStorage.setItem(DB_KEYS.ROSTER_PENDING, 'true');
+            localStorage.setItem(DB_KEYS.PENDING_SYNC, 'true');
+            const verified = await syncPendingRosterToCloud();
+            if (verified) {
+                localStorage.removeItem(DB_KEYS.PENDING_SYNC);
+                setCloudBadgeStatus('synced', 'Roster Saved & Verified');
+                showToast('Roster Imported & Verified', `${imported.length} student(s) verified in Google Sheets for ${classGroup}.`);
+            } else {
+                setCloudBadgeStatus('pending', 'Roster Saved Locally — Cloud Pending');
+                showToast('Roster Saved Locally', `${imported.length} student(s) are saved on this device. Cloud storage could not be verified; the local roster will be protected and retried.`, true);
+            }
+            const box = document.getElementById('bulk-stu-names'); if (box) box.value = '';
             renderApp('students');
         }
 
@@ -3052,6 +3090,10 @@
             initDatabase();
             renderApp();
             if (getCloudSyncUrl()) {
+                if (localStorage.getItem(DB_KEYS.ROSTER_PENDING) === 'true') {
+                    const verified = await syncPendingRosterToCloud();
+                    if (verified) localStorage.removeItem(DB_KEYS.PENDING_SYNC);
+                }
                 await pullFromCloud(false);
             } else {
                 setCloudBadgeStatus('local', 'Local Mode');
