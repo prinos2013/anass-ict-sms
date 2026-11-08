@@ -659,70 +659,99 @@
             });
         }
 
-        function saveProfilePasscodeChange() {
+        function passcodeText(value) {
+            return value === null || value === undefined ? '' : String(value).trim();
+        }
+
+        function findAccountById(records, id, role) {
+            const wanted = passcodeText(id).toLowerCase();
+            return (records || []).find(record => {
+                const r = record || {};
+                const recordId = role === 'student'
+                    ? (r.id || r.studentId || r.student_id || r.studentID || r['Student ID'])
+                    : (r.id || r.staffId || r.staff_id || r.staffID || r['Staff ID']);
+                return passcodeText(recordId).toLowerCase() === wanted;
+            });
+        }
+
+        async function saveProfilePasscodeChange() {
             const user = getCurrentUser();
             if (!user) return;
 
-            const currPass = (document.getElementById('sec-curr-pass').value || '').trim();
-            const newPass = (document.getElementById('sec-new-pass').value || '').trim();
-            const confPass = (document.getElementById('sec-conf-pass').value || '').trim();
+            const currPass = passcodeText(document.getElementById('sec-curr-pass')?.value);
+            const newPass = passcodeText(document.getElementById('sec-new-pass')?.value);
+            const confPass = passcodeText(document.getElementById('sec-conf-pass')?.value);
 
             if (!currPass || !newPass || !confPass) {
                 showToast('Missing Fields', 'Please fill in all passcode fields.', true);
                 return;
             }
-
             if (newPass.length < 4) {
                 showToast('Passcode Too Short', 'New passcode must be at least 4 characters.', true);
                 return;
             }
-
             if (newPass !== confPass) {
                 showToast('Mismatch', 'New passcode and confirmation do not match.', true);
                 return;
             }
 
-            if (user.role === 'student') {
-                const students = JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]');
-                const stu = students.find(s => s.id === user.id);
-                if (!stu || stu.passcode !== currPass) {
-                    showToast('Incorrect Passcode', 'Your current passcode is incorrect.', true);
-                    return;
-                }
-                stu.passcode = newPass;
-                user.passcode = newPass;
-                localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
-                saveTableAndSync('STUDENTS', students);
-                closeModal();
-                showToast('Passcode Updated & Synced!', 'Your new student login passcode has been saved to the cloud.');
-            } else if (user.role === 'teacher') {
-                const teachers = JSON.parse(localStorage.getItem(DB_KEYS.TEACHERS) || '[]');
-                const tch = teachers.find(t => t.id === user.id);
-                if (!tch || tch.passcode !== currPass) {
-                    showToast('Incorrect Passcode', 'Your current staff passcode is incorrect.', true);
-                    return;
-                }
-                tch.passcode = newPass;
-                user.passcode = newPass;
-                localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
-                saveTableAndSync('TEACHERS', teachers);
-                closeModal();
-                showToast('Staff Passcode Synced!', 'Your new teacher login passcode has been saved to the cloud.');
-            } else if (user.role === 'admin') {
-                const settings = getSettings();
-                const currentAdminPasscode = settings.adminPasscode || 'admin123';
-                const legacyDefaultAccepted = !settings.adminPasscode && currPass === 'admin';
+            if (user.role === 'student' || user.role === 'teacher') {
+                const isStudent = user.role === 'student';
+                const table = isStudent ? 'STUDENTS' : 'TEACHERS';
+                const key = isStudent ? DB_KEYS.STUDENTS : DB_KEYS.TEACHERS;
+                const records = JSON.parse(localStorage.getItem(key) || '[]') || [];
+                const account = findAccountById(records, user.id, user.role);
 
-                if (currPass !== currentAdminPasscode && !legacyDefaultAccepted) {
-                    showToast('Incorrect Passcode', 'Your current HOD/Admin passcode is incorrect.', true);
+                if (!account) {
+                    showToast('Account Not Found', 'Your account could not be found in the loaded roster. Synchronize the portal and try again.', true);
+                    return;
+                }
+
+                const storedPass = passcodeText(
+                    account.passcode ?? account.passCode ?? account.password ??
+                    account.PASSCODE ?? account['Passcode'] ?? account['Password']
+                );
+                if (storedPass !== currPass) {
+                    showToast('Current Passcode Not Matched', 'The entered passcode does not match the passcode stored for this account. Check that the latest roster has synchronized.', true);
+                    return;
+                }
+
+                account.passcode = newPass;
+                user.passcode = newPass;
+                localStorage.setItem(key, JSON.stringify(records));
+                localStorage.setItem(DB_KEYS.CURRENT_USER, JSON.stringify(user));
+
+                const syncResult = await saveTableAndSync(table, records);
+                closeModal();
+                if (syncResult) {
+                    showToast('Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
+                } else {
+                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
+                }
+                return;
+            }
+
+            if (user.role === 'admin') {
+                const settings = getSettings();
+                const currentAdminPasscode = passcodeText(
+                    settings.adminPasscode ?? settings.admin_passcode ??
+                    settings.ADMIN_PASSCODE ?? settings.hodPasscode ?? settings.hod_passcode
+                ) || 'admin123';
+
+                if (currPass !== currentAdminPasscode) {
+                    showToast('Current Passcode Not Matched', 'The entered current HoD/Admin passcode does not match the passcode saved in portal settings.', true);
                     return;
                 }
 
                 settings.adminPasscode = newPass;
                 localStorage.setItem(DB_KEYS.SETTINGS, JSON.stringify(settings));
-                saveTableAndSync('SETTINGS', settings);
+                const syncResult = await saveTableAndSync('SETTINGS', settings);
                 closeModal();
-                showToast('HOD/Admin Passcode Updated', 'Your new passcode has been saved. Cloud synchronization will follow the existing sync settings.');
+                if (syncResult) {
+                    showToast('HoD/Admin Passcode Updated', 'Your new passcode was saved and verified in the cloud.');
+                } else {
+                    showToast('Passcode Saved Locally', 'Your passcode changed on this device, but cloud verification is pending.', true);
+                }
             }
         }
 
